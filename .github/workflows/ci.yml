@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore:
+      - README.md
+      - 'docs/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '!README.md'
+              - '!docs/**'
+
+  go:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt check
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Needs gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - name: Test go core
+        shell: pwsh
+        run: |
+          # The server discovery test fails when llama-server is on PATH.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'llama-server.exe')) }) -join ';'
+          go test ./...
+
+  package:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe .
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          $name = "offline-translator-$version-windows-x64"
+          $stage = "dist\$name"
+          New-Item -ItemType Directory -Force "$stage\scripts" | Out-Null
+          Copy-Item dist\offline-translator.exe $stage
+          Copy-Item README.md $stage
+          Copy-Item scripts\setup-runtime.ps1 "$stage\scripts"
+          Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip" -Force
+          "zip=dist\$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          & $iscc ".\scripts\installer.iss" "/DAppVersion=$($version -replace '^v', '')"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            dist/*.exe
+
+  # Keep the existing required check name, including for documentation-only PRs.
+  build:
+    if: always()
+    needs: [changes, go, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ github.event_name == 'pull_request' && needs.changes.outputs.code == 'false' }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          jobs = json.loads(os.environ['RESULTS'])
+          expected = 'skipped' if os.environ['DOCS_ONLY'] == 'true' else 'success'
+          ok = jobs['changes']['result'] == 'success' and all(
+              jobs[name]['result'] == expected for name in ('go', 'package')
+          )
+          print({name: job['result'] for name, job in jobs.items()})
+          sys.exit(0 if ok else 1)
+          PY
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          body: |
+            - Windows 11용 오프라인 번역 앱 제공 (설치 마법사 실행 파일과 휴대용 ZIP)
+            - 전역 단축키: 다른 앱의 선택 텍스트를 즉시 번역 (기본 Ctrl+Shift+C — 설정 탭에서 켬)
+            - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
+          files: |
+            dist/*.zip
+            dist/*.exe
+          fail_on_unmatched_files: true

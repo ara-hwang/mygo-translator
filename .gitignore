@@ -1,0 +1,7 @@
+/vendor
+/.vendor
+/models
+/runtime
+/dist
+*.part
+*.tmp
