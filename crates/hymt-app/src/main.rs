@@ -4,6 +4,7 @@
 //! `llama-server` child process and is reached over loopback HTTP. Nothing leaves the machine.
 
 mod root;
+mod smooth_scroll;
 mod ui_common;
 mod ui_models;
 mod ui_settings;

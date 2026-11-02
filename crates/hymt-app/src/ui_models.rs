@@ -8,11 +8,10 @@ use gpui_kit::component::progress::Progress;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, px, Context, Div, FontWeight, SharedString};
-
+use gpui_kit::{div, px, Context, Div, FontWeight, ScrollEvent, SharedString};
 use hymt_core::models::{self, ModelOption};
 
-use crate::root::Root;
+use crate::root::{Root, ScrollSpot};
 use crate::widgets;
 
 const LLAMA_RELEASES: &str = "https://github.com/ggml-org/llama.cpp/releases";
@@ -37,6 +36,10 @@ impl Root {
             .min_h_0()
             .id("models-scroll")
             .overflow_y_scroll()
+            .track_scroll(self.models_scroll.handle())
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                this.smooth_scroll(ScrollSpot::Models, event, window, cx);
+            }))
             .p_4()
             .gap_3()
             .child(widgets::section_label("모델 다운로드", cx))
@@ -85,6 +88,10 @@ impl Root {
                     .h(px(160.0))
                     .id("engine-log")
                     .overflow_y_scroll()
+                    .track_scroll(self.engine_log_scroll.handle())
+                    .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                        this.smooth_scroll(ScrollSpot::EngineLog, event, window, cx);
+                    }))
                     .p_2()
                     .rounded(cx.theme().radius)
                     .border_1()

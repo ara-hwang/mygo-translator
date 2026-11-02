@@ -22,7 +22,9 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::{h_flex, ActiveTheme, IndexPath, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, AnyWindowHandle, App, ClipboardItem, Context, Entity, SharedString, Window};
+use gpui_kit::{
+    div, AnyWindowHandle, App, ClipboardItem, Context, Entity, ScrollEvent, SharedString, Window,
+};
 use hymt_core::{
     client::{self, Endpoint, GenerationParams, TranslationResult},
     engine::{self, EngineEvent, EngineState, LaunchConfig, Supervisor},
@@ -33,6 +35,8 @@ use hymt_core::{
     prompt::{self, PromptLanguage, PromptMode},
     settings::Settings,
 };
+
+use crate::smooth_scroll::SmoothScroller;
 
 /// Top-level tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +138,18 @@ fn language_items() -> Vec<LanguageItem> {
         .collect()
 }
 
+/// Which of the app's scrollable containers a wheel event or an eased chase
+/// step belongs to. Each one is backed by a [`SmoothScroller`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollSpot {
+    /// The models tab page.
+    Models,
+    /// The llama-server log box on the models tab.
+    EngineLog,
+    /// The settings tab page.
+    Settings,
+}
+
 /// Timing information for the last translation.
 #[derive(Clone, Debug, Default)]
 pub struct Stats {
@@ -212,6 +228,12 @@ pub struct Root {
     pub download: Option<Download>,
     /// The window this root view lives in, used to raise notifications from the pump task.
     pub window_handle: AnyWindowHandle,
+    /// Eased wheel scrolling for the models tab page.
+    pub models_scroll: SmoothScroller,
+    /// Eased wheel scrolling for the engine log box on the models tab.
+    pub engine_log_scroll: SmoothScroller,
+    /// Eased wheel scrolling for the settings tab page.
+    pub settings_scroll: SmoothScroller,
     /// Messages raised before the notification overlay was ready.
     pending_notices: Vec<(String, bool)>,
     /// True once the notification overlay can receive messages.
@@ -324,6 +346,9 @@ impl Root {
             models,
             download: None,
             window_handle,
+            models_scroll: SmoothScroller::default(),
+            engine_log_scroll: SmoothScroller::default(),
+            settings_scroll: SmoothScroller::default(),
             pending_notices: Vec::new(),
             overlay_ready: false,
             exe_dir,
@@ -395,6 +420,64 @@ impl Root {
                 self.source.update(cx, |state, cx| state.focus(window, cx));
             }
         }
+    }
+
+    /// Scroller backing one [`ScrollSpot`].
+    fn scroller_mut(&mut self, spot: ScrollSpot) -> &mut SmoothScroller {
+        match spot {
+            ScrollSpot::Models => &mut self.models_scroll,
+            ScrollSpot::EngineLog => &mut self.engine_log_scroll,
+            ScrollSpot::Settings => &mut self.settings_scroll,
+        }
+    }
+
+    /// Feeds a wheel event on one scroll container into its eased chase instead
+    /// of letting it move the offset in one instant jump.
+    pub fn smooth_scroll(
+        &mut self,
+        spot: ScrollSpot,
+        event: &ScrollEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let chasing = {
+            let scroller = self.scroller_mut(spot);
+            scroller.on_wheel(event, window);
+            if !scroller.is_chasing() {
+                scroller.set_chasing(true);
+                true
+            } else {
+                false
+            }
+        };
+        if chasing {
+            Self::schedule_scroll_tick(cx.entity(), spot, window);
+        }
+    }
+
+    /// Runs one eased chase step for `spot`, redrawing the view, and keeps
+    /// scheduling itself until the chase settles.
+    fn scroll_tick(&mut self, spot: ScrollSpot, window: &mut Window, cx: &mut Context<Self>) {
+        let more = {
+            let scroller = self.scroller_mut(spot);
+            let continues = scroller.chase_step();
+            scroller.set_chasing(continues);
+            continues
+        };
+        cx.notify();
+        if more {
+            let entity = cx.entity();
+            window.on_next_frame(move |window, cx| {
+                entity.update(cx, |root, cx| root.scroll_tick(spot, window, cx));
+            });
+        }
+    }
+
+    /// Queues the first chase step of a container's animation on the next frame.
+    fn schedule_scroll_tick(entity: Entity<Self>, spot: ScrollSpot, window: &mut Window) {
+        window.on_next_frame(move |window, cx| {
+            entity.update(cx, |root, cx| root.scroll_tick(spot, window, cx));
+        });
     }
 
     /// Raises a toast notification, or buffers it until the overlay is ready.

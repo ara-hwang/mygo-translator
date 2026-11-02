@@ -6,11 +6,11 @@ use gpui_kit::component::radio::{Radio, RadioGroup};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{h_flex, v_flex, Selectable};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, px, relative, AnyElement, Context, Div, SharedString, Window};
+use gpui_kit::{div, px, relative, AnyElement, Context, Div, ScrollEvent, SharedString, Window};
 
 use hymt_core::{glossary, settings::Settings};
 
-use crate::root::{Root, PROMPT_LANGUAGES, STYLE_PRESETS};
+use crate::root::{Root, ScrollSpot, PROMPT_LANGUAGES, STYLE_PRESETS};
 use crate::widgets;
 
 impl Root {
@@ -61,6 +61,10 @@ impl Root {
             .min_h_0()
             .id("settings-scroll")
             .overflow_y_scroll()
+            .track_scroll(self.settings_scroll.handle())
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
+                this.smooth_scroll(ScrollSpot::Settings, event, window, cx);
+            }))
             .p_4()
             .gap_3()
             .child(widgets::section_label("생성 파라미터", cx))
