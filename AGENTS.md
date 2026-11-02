@@ -43,7 +43,7 @@ Cargo workspace, 크레이트 2개:
 
 ## 플랫폼
 
-- 대상: Windows 11 x64, rust-version 1.90 (workspace 고정).
+- 대상: Windows 11 x64, rust-version 1.93 (workspace 고정).
 - hymt-core는 비-Windows에서도 컴파일·테스트된다. OS 분기가 필요하면 hymt-core에 두되 최소화.
 - hymt-app은 Windows 전용이다. Win32 접근은 `windows`, `winreg`, `tray-icon` 크레이트로만 하고 직접 FFI는 쓰지 않는다.
 - 릴리스 빌드는 GUI 서브시스템이라 콘솔 출력이 보이지 않는다. 진단은 앱 로그(`logs/hymt.log`)와 llama-server 로그로 확인.

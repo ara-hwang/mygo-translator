@@ -21,7 +21,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.90"
+          toolchain: "1.93"
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -89,5 +89,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
+          body: |
+            - Windows 11용 오프라인 번역 앱 제공
+            - 원문·번역 공통 글자 크기 조절 및 단축키 지원
+            - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
           files: dist/*.zip
           fail_on_unmatched_files: true

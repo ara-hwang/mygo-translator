@@ -29,7 +29,7 @@ GPUI(Rust UI 프레임워크)로 만든 데스크톱 번역기입니다. 추론�
 | 항목 | 요구 사항 |
 | --- | --- |
 | OS | Windows 11 x64 |
-| Rust | 1.90 이상 (stable) |
+| Rust | 소스 빌드 시 1.93 이상 (stable) |
 | 빌드 도구 | Visual Studio Build Tools의 "Desktop development with C++" + Windows 11 SDK |
 | 런타임 | `llama-server.exe` (llama.cpp Windows 빌드) — 앱에 포함되지 않습니다 |
 | 디스크 | 모델 1.06GB(1.8B Q4) ~ 8GB(7B Q8) + 런타임 약 100MB |
@@ -39,7 +39,8 @@ GPUI(Rust UI 프레임워크)로 만든 데스크톱 번역기입니다. 추론�
 
 ## 빠른 시작
 
-1. **빌드**
+1. **앱 실행**
+   릴리스 ZIP을 압축 해제하고 `hymt.exe`를 실행합니다. 또는 소스에서 빌드합니다.
    ```powershell
    git clone <this-repo> hymt
    cd hymt
