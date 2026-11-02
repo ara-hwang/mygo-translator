@@ -82,6 +82,16 @@ impl Default for GenerationSettings {
     }
 }
 
+/// Desktop behaviour: tray icon and Windows sign-in startup.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DesktopSettings {
+    /// Keep the application alive in the notification area when the window closes.
+    pub keep_in_tray: bool,
+    /// Register the executable in the current user's Windows `Run` key.
+    pub start_with_windows: bool,
+}
+
 /// How prompts are built.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -126,6 +136,8 @@ pub struct Settings {
     pub generation: GenerationSettings,
     /// Prompt options.
     pub prompt: PromptSettings,
+    /// Tray and Windows startup options.
+    pub desktop: DesktopSettings,
 }
 
 impl Default for Settings {
@@ -137,6 +149,7 @@ impl Default for Settings {
             server: ServerSettings::default(),
             generation: GenerationSettings::default(),
             prompt: PromptSettings::default(),
+            desktop: DesktopSettings::default(),
         }
     }
 }
@@ -248,6 +261,8 @@ mod tests {
         assert_eq!(settings.generation.repeat_penalty, 1.05);
         assert_eq!(settings.generation.max_tokens, 4096);
         assert!(settings.server.port > 1024);
+        assert!(!settings.desktop.keep_in_tray);
+        assert!(!settings.desktop.start_with_windows);
     }
 
     #[test]
@@ -258,6 +273,8 @@ mod tests {
         settings.target_lang = "ja".into();
         settings.server.ctx_size = 8192;
         settings.prompt.glossary = "GPUI=>지피유아이".into();
+        settings.desktop.keep_in_tray = true;
+        settings.desktop.start_with_windows = true;
         settings.save(&path).unwrap();
 
         let (loaded, warning) = Settings::load_or_default(&path);
@@ -303,6 +320,13 @@ mod tests {
         assert_eq!(fixed.source_lang, "ko");
         assert_eq!(fixed.target_lang, "en");
         assert_eq!(fixed.download_base, "https://huggingface.co");
+    }
+
+    #[test]
+    fn older_settings_files_get_desktop_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"source_lang":"ko","target_lang":"en"}"#).unwrap();
+        assert_eq!(settings.desktop, DesktopSettings::default());
     }
 
     #[test]

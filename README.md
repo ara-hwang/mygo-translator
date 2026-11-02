@@ -21,6 +21,7 @@ GPUI(Rust UI 프레임워크)로 만든 데스크톱 번역기입니다. 추론�
 - **모델 관리 내장**: Tencent 공식 GGUF 저장소에서 검증된 파일 크기와 함께 원클릭 다운로드(이어받기 지원), 로컬 `.gguf` 자동 스캔.
 - **엔진 감독**: llama.cpp 서버 프로세스를 앱이 직접 관리하고, `/health`가 준비될 때까지 상태를 보여 줍니다. 크래시해도 UI는 살아 있습니다.
 - **IME 지원 에디터**: GPUI 0.2에 텍스트 입력 위젯이 없어, 한글 IME 조합·선택·소프트 랩·스크롤을 지원하는 에디터를 직접 구현했습니다(`crates/hymt-app/src/text_area.rs`).
+- **트레이·자동 실행**: 설정에서 창을 닫아도 트레이 아이콘으로 유지하거나 Windows 시작 시 자동 실행할 수 있습니다. 트레이 아이콘을 왼쪽 클릭하면 창이 다시 열립니다.
 - **이식성**: `portable.txt`를 exe 옆에 두면 모든 데이터가 exe 폴더에 저장됩니다.
 
 ## 요구 사항 (Windows 11)
@@ -104,7 +105,15 @@ Zed	제드
 - 기본: `%LOCALAPPDATA%\HyMT\` (`settings.json`, `models\`, `runtime\`, `logs\`)
 - 이식 모드: exe 옆에 `portable.txt` 파일이 있거나 `models` 폴더가 있으면 exe 폴더를 사용합니다.
 
-`settings.json`에는 언어 쌍, 생성 파라미터(기본값은 Tencent 권장값: temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05, max_tokens 4096), 프롬프트 옵션, 서버 옵션(ctx, threads, GPU layers, port)이 저장됩니다.
+`settings.json`에는 언어 쌍, 생성 파라미터(기본값은 Tencent 권장값: temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05, max_tokens 4096), 프롬프트 옵션, 서버 옵션(ctx, threads, GPU layers, port), 트레이·자동 실행 옵션이 저장됩니다.
+
+## 시작 및 트레이
+
+설정 → **시작 및 트레이**에서 다음을 선택할 수 있습니다.
+
+- **트레이 아이콘으로 유지**: 창을 닫아도 프로세스가 종료되지 않고 알림 영역에 남습니다. 아이콘 왼쪽 클릭은 창 열기, 오른쪽 클릭 메뉴는 열기·종료입니다.
+- **Windows 시작 시 자동 실행**: 현재 실행 파일을 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`에 등록합니다. 관리자 권한이 필요 없으며, 앱을 옮긴 뒤 다시 실행하면 등록 경로가 갱신됩니다.
+- 두 옵션이 모두 켜져 있으면 로그인 시 창 없이 트레이에서 시작합니다. 트레이 아이콘을 만들지 못하면 창을 자동으로 표시합니다.
 
 ## 문제 해결
 

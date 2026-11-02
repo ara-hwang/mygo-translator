@@ -67,6 +67,52 @@ impl Root {
             }))
             .p_4()
             .gap_3()
+            .child(widgets::section_label("시작 및 트레이", cx))
+            .child(
+                widgets::card(cx)
+                    .child(widgets::panel_header("백그라운드 동작", None, cx))
+                    .child(
+                        v_flex()
+                            .gap_3()
+                            .p_3()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        Switch::new("keep-in-tray")
+                                            .label("트레이 아이콘으로 유지")
+                                            .checked(self.settings.desktop.keep_in_tray)
+                                            .on_change(cx.listener(
+                                                |this, checked: &bool, window, cx| {
+                                                    this.set_tray_enabled(*checked, window, cx);
+                                                },
+                                            )),
+                                    )
+                                    .child(widgets::muted(
+                                        "창을 닫아도 종료하지 않고 알림 영역에서 계속 실행합니다. 아이콘을 왼쪽 클릭하면 창이 다시 열립니다.",
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        Switch::new("start-with-windows")
+                                            .label("Windows 시작 시 자동 실행")
+                                            .checked(self.settings.desktop.start_with_windows)
+                                            .on_change(cx.listener(
+                                                |this, checked: &bool, window, cx| {
+                                                    this.set_start_with_windows(*checked, window, cx);
+                                                },
+                                            )),
+                                    )
+                                    .child(widgets::muted(
+                                        "현재 실행 파일을 이 사용자의 시작 프로그램에 등록합니다. 트레이 유지가 켜져 있으면 창 없이 트레이로 시작합니다.",
+                                        cx,
+                                    )),
+                            ),
+                    ),
+            )
             .child(widgets::section_label("생성 파라미터", cx))
             .child(
                 widgets::card(cx)
@@ -353,9 +399,22 @@ impl Root {
     fn on_reset_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.settings.server.model_path.clone();
         let base = self.settings.download_base.clone();
+        let had_autostart = self.settings.desktop.start_with_windows;
         self.settings = Settings::default();
         self.settings.server.model_path = model;
         self.settings.download_base = base;
+        self.tray = None;
+        if had_autostart {
+            if let Err(err) = crate::autostart::set_enabled(false) {
+                self.settings.desktop.start_with_windows = true;
+                self.notify(
+                    format!("시작 프로그램을 해제할 수 없습니다: {err}"),
+                    true,
+                    window,
+                    cx,
+                );
+            }
+        }
         self.glossary_editor
             .update(cx, |state, cx| state.clean(window, cx));
         self.settings.prompt.glossary.clear();

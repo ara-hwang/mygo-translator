@@ -37,6 +37,7 @@ use hymt_core::{
 };
 
 use crate::smooth_scroll::SmoothScroller;
+use crate::{autostart, tray, window_ops};
 
 /// Top-level tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +227,8 @@ pub struct Root {
     pub models: Vec<PathBuf>,
     /// Active download.
     pub download: Option<Download>,
+    /// Notification-area icon, present while the tray option is enabled.
+    pub tray: Option<tray::Tray>,
     /// The window this root view lives in, used to raise notifications from the pump task.
     pub window_handle: AnyWindowHandle,
     /// Eased wheel scrolling for the models tab page.
@@ -246,11 +249,43 @@ impl Root {
     pub fn new(
         window_handle: AnyWindowHandle,
         window: &mut Window,
+        start_hidden: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        if start_hidden {
+            // The window was created with its final bounds; hide it before the first frame so
+            // a sign-in launch goes straight to the notification area.
+            let _ = window_ops::hide(window);
+        }
+
         let paths = AppPaths::detect();
         let _ = paths.ensure();
         let (settings, settings_warning) = Settings::load_or_default(&paths.settings_file());
+
+        // Create the tray icon before the model scan so a hidden sign-in launch has its
+        // notification-area entry as early as possible.
+        let (tray, tray_error) = if settings.desktop.keep_in_tray {
+            match tray::Tray::new() {
+                Ok(tray) => (Some(tray), None),
+                Err(err) => (None, Some(err)),
+            }
+        } else {
+            (None, None)
+        };
+        let startup_error = if settings.desktop.start_with_windows {
+            autostart::set_enabled(true)
+                .err()
+                .map(|err| format!("Windows 시작 프로그램을 갱신할 수 없습니다: {err}"))
+        } else {
+            None
+        };
+
+        if start_hidden && tray.is_none() {
+            // The tray option is on but the icon could not be created: never leave the app
+            // running with no way to reach it.
+            window_ops::show(window);
+        }
+
         let models = engine::scan_gguf(&paths.models_dir());
         let exe_dir = std::env::current_exe()
             .ok()
@@ -345,6 +380,7 @@ impl Root {
             server_path,
             models,
             download: None,
+            tray,
             window_handle,
             models_scroll: SmoothScroller::default(),
             engine_log_scroll: SmoothScroller::default(),
@@ -357,6 +393,22 @@ impl Root {
         if let Some(warning) = settings_warning {
             root.notify(warning, true, window, cx);
         }
+        if let Some(error) = tray_error {
+            root.notify(
+                format!("트레이 아이콘을 만들 수 없습니다: {error}"),
+                true,
+                window,
+                cx,
+            );
+        }
+        if let Some(error) = startup_error {
+            root.notify(error, true, window, cx);
+        }
+
+        let entity = cx.entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            entity.read(cx).should_close_window(window)
+        });
 
         if root.settings.server.auto_start {
             root.start_engine(window, cx);
@@ -514,6 +566,13 @@ impl Root {
     /// Drains background channels. Returns true when the UI needs a redraw.
     pub fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
+
+        if let Some(command) = self.poll_tray(window, cx) {
+            if command == tray::TrayCommand::Quit {
+                return true;
+            }
+            changed = true;
+        }
 
         if !self.overlay_ready {
             self.overlay_ready = true;
@@ -901,6 +960,89 @@ impl Root {
             Ok(()) => self.notify("설정을 저장했습니다.", false, window, cx),
             Err(err) => self.notify(
                 format!("설정을 저장할 수 없습니다: {err}"),
+                true,
+                window,
+                cx,
+            ),
+        }
+        cx.notify();
+    }
+
+    /// Handles the tray icon's click and menu. Returns the command that was consumed.
+    fn poll_tray(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<tray::TrayCommand> {
+        let command = self.tray.as_ref()?.poll()?;
+        match command {
+            tray::TrayCommand::Show => {
+                window_ops::show(window);
+                self.source.update(cx, |state, cx| state.focus(window, cx));
+            }
+            tray::TrayCommand::Quit => {
+                self.stop_engine(cx);
+                self.tray = None;
+                cx.quit();
+            }
+        }
+        Some(command)
+    }
+
+    /// True when the window should actually close instead of hiding into the tray.
+    fn should_close_window(&self, window: &mut Window) -> bool {
+        !(self.settings.desktop.keep_in_tray && self.tray.is_some() && window_ops::hide(window))
+    }
+
+    /// Enables or disables the notification-area icon.
+    pub fn set_tray_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if enabled {
+            if self.tray.is_none() {
+                match tray::Tray::new() {
+                    Ok(tray) => self.tray = Some(tray),
+                    Err(err) => {
+                        self.notify(
+                            format!("트레이 아이콘을 만들 수 없습니다: {err}"),
+                            true,
+                            window,
+                            cx,
+                        );
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            self.settings.desktop.keep_in_tray = true;
+            self.notify("창을 닫으면 트레이로 숨깁니다.", false, window, cx);
+        } else {
+            self.tray = None;
+            self.settings.desktop.keep_in_tray = false;
+            self.notify("트레이 아이콘을 껐습니다.", false, window, cx);
+        }
+        let _ = self.save_settings();
+        cx.notify();
+    }
+
+    /// Adds or removes the app from the current user's Windows startup entries.
+    pub fn set_start_with_windows(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match autostart::set_enabled(enabled) {
+            Ok(()) => {
+                self.settings.desktop.start_with_windows = enabled;
+                let message = if enabled {
+                    "Windows 시작 시 자동 실행을 켰습니다."
+                } else {
+                    "Windows 시작 시 자동 실행을 껐습니다."
+                };
+                self.notify(message, false, window, cx);
+                let _ = self.save_settings();
+            }
+            Err(err) => self.notify(
+                format!("시작 프로그램 설정을 변경할 수 없습니다: {err}"),
                 true,
                 window,
                 cx,
