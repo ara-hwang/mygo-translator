@@ -1,143 +1,114 @@
-//! Small styled building blocks shared by all views.
+//! Small building blocks shared by all views, styled with the GPUI Kit theme tokens.
 
-use gpui::{div, prelude::*, rgb, Div, SharedString};
-
-use crate::theme;
-
-/// Filled accent button. Attach a click handler at the call site.
-pub fn primary(label: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .h(gpui::px(34.0))
-        .px_4()
-        .rounded_md()
-        .bg(rgb(theme::ACCENT))
-        .text_color(gpui::white())
-        .text_sm()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .cursor_pointer()
-        .hover(|style| style.bg(gpui::rgb(0x7aa2ff)))
-        .child(label.into())
-}
-
-/// Outlined button for secondary actions.
-pub fn secondary(label: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .h(gpui::px(34.0))
-        .px_3()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme::BORDER))
-        .bg(rgb(theme::PANEL_ALT))
-        .text_color(rgb(theme::TEXT))
-        .text_sm()
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-        .child(label.into())
-}
-
-/// A button that looks unavailable.
-pub fn disabled(label: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .h(gpui::px(34.0))
-        .px_4()
-        .rounded_md()
-        .bg(rgb(theme::PANEL_ALT))
-        .text_color(rgb(theme::DISABLED))
-        .text_sm()
-        .child(label.into())
-}
-
-/// Compact pill, used for language and option selection.
-pub fn chip(label: impl Into<SharedString>, active: bool) -> Div {
-    let (background, border, color) = if active {
-        (theme::ACCENT_SOFT, theme::ACCENT, theme::TEXT)
-    } else {
-        (theme::PANEL_ALT, theme::BORDER, theme::MUTED)
-    };
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .h(gpui::px(30.0))
-        .px_3()
-        .rounded_full()
-        .border_1()
-        .border_color(rgb(border))
-        .bg(rgb(background))
-        .text_color(rgb(color))
-        .text_sm()
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-        .child(label.into())
-}
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme, IconName};
+use gpui_kit::prelude::*;
+use gpui_kit::{div, px, AnyElement, App, ClickEvent, Div, FontWeight, Hsla, SharedString, Window};
 
 /// A raised panel with the standard border and radius.
-pub fn card() -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .rounded_lg()
+pub fn card(cx: &App) -> Div {
+    v_flex()
+        .rounded(cx.theme().radius)
         .border_1()
-        .border_color(rgb(theme::BORDER))
-        .bg(rgb(theme::PANEL))
+        .border_color(cx.theme().border)
+        .bg(cx.theme().secondary)
 }
 
-/// Small uppercase-ish section label.
-pub fn section_label(text: impl Into<SharedString>) -> Div {
+/// A card header with a title on the left and arbitrary controls on the right.
+pub fn panel_header(title: impl Into<SharedString>, right: Option<AnyElement>, cx: &App) -> Div {
+    let mut header = h_flex()
+        .items_center()
+        .justify_between()
+        .px_3()
+        .h(px(42.0))
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(cx.theme().muted_foreground)
+                .child(title.into()),
+        );
+    if let Some(right) = right {
+        header = header.child(right);
+    }
+    header
+}
+
+/// Small section label.
+pub fn section_label(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_xs()
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme::MUTED))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
 
 /// Secondary explanatory text.
-pub fn muted(text: impl Into<SharedString>) -> Div {
+pub fn muted(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_xs()
-        .text_color(rgb(theme::MUTED))
+        .text_color(cx.theme().muted_foreground)
         .child(text.into())
 }
 
-/// A colored status dot with a label.
-pub fn status_dot(color: u32, label: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_2()
-        .child(div().size(gpui::px(8.0)).rounded_full().bg(rgb(color)))
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme::MUTED))
-                .child(label.into()),
-        )
-}
-
 /// Lays out a label and a value on one line, value on the right.
-pub fn setting_row(label: impl Into<SharedString>, value: impl gpui::IntoElement) -> Div {
-    div()
-        .flex()
-        .flex_row()
+pub fn setting_row(label: impl Into<SharedString>, value: impl IntoElement) -> Div {
+    h_flex()
         .items_center()
         .justify_between()
         .gap_4()
         .py_1()
+        .child(div().text_sm().child(label.into()))
+        .child(value)
+}
+
+/// A colored status dot with a label.
+pub fn status_dot(color: Hsla, label: impl Into<SharedString>, cx: &App) -> Div {
+    h_flex()
+        .items_center()
+        .gap_2()
+        .child(div().size(px(8.0)).rounded_full().bg(color))
         .child(
             div()
-                .text_sm()
-                .text_color(rgb(theme::TEXT))
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
                 .child(label.into()),
         )
-        .child(value)
+}
+
+/// A `- value +` control used for numeric settings.
+pub fn stepper(
+    id: &'static str,
+    value: impl Into<SharedString>,
+    minus: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    plus: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    h_flex()
+        .items_center()
+        .gap_1()
+        .child(
+            Button::new(SharedString::from(format!("{id}-dec")))
+                .text()
+                .compact()
+                .icon(IconName::Minus)
+                .on_click(minus),
+        )
+        .child(
+            div()
+                .w(px(72.0))
+                .flex()
+                .justify_center()
+                .text_sm()
+                .child(value.into()),
+        )
+        .child(
+            Button::new(SharedString::from(format!("{id}-inc")))
+                .text()
+                .compact()
+                .icon(IconName::Plus)
+                .on_click(plus),
+        )
 }

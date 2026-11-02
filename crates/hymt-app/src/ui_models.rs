@@ -3,22 +3,26 @@
 use std::fs;
 use std::path::PathBuf;
 
-use gpui::{
-    div, prelude::*, px, relative, rgb, Context, Div, IntoElement, MouseButton, MouseUpEvent,
-    Window,
-};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::tag::Tag;
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme};
+use gpui_kit::prelude::*;
+use gpui_kit::{div, px, Context, Div, FontWeight};
+
 use hymt_core::models::{self, ModelOption};
 
-use crate::{root::Root, theme, ui_common::panel_header, widgets};
+use crate::root::Root;
+use crate::widgets;
 
 const LLAMA_RELEASES: &str = "https://github.com/ggml-org/llama.cpp/releases";
 
 impl Root {
     pub fn render_models(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut catalog = Vec::new();
-        for option in models::CATALOG {
-            catalog.push(self.catalog_row(option, cx));
-        }
+        let catalog: Vec<Div> = models::CATALOG
+            .iter()
+            .map(|option| self.catalog_row(option, cx))
+            .collect();
 
         let local: Vec<PathBuf> = self.models.clone();
         let mut local_rows = Vec::new();
@@ -28,53 +32,52 @@ impl Root {
 
         let log_lines: Vec<String> = self.engine_log.iter().cloned().collect();
 
-        div()
-            .flex()
-            .flex_col()
+        v_flex()
             .flex_1()
             .min_h_0()
             .id("models-scroll")
             .overflow_y_scroll()
             .p_4()
             .gap_3()
-            .child(widgets::section_label("모델 다운로드"))
+            .child(widgets::section_label("모델 다운로드", cx))
             .child(widgets::muted(
                 "Tencent 공식 GGUF입니다. 한 번만 내려받으면 이후에는 완전히 오프라인으로 동작합니다.",
+                cx,
             ))
             .child(
-                widgets::card()
-                    .child(panel_header("Hy-MT2 모델", None))
-                    .children(catalog),
+                widgets::card(cx).child(widgets::panel_header("Hy-MT2 모델", None, cx)).children(catalog),
             )
-            .child(widgets::section_label("엔진 런타임"))
+            .child(widgets::section_label("엔진 런타임", cx))
             .child(self.runtime_card(cx))
             .child(
-                div()
-                    .flex()
-                    .flex_row()
+                h_flex()
                     .items_center()
                     .justify_between()
-                    .child(widgets::section_label(format!(
-                        "설치된 모델 ({})",
-                        self.models.len()
-                    )))
+                    .child(widgets::section_label(
+                        format!("설치된 모델 ({})", self.models.len()),
+                        cx,
+                    ))
                     .child(
-                        widgets::secondary("새로고침")
-                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_rescan_models)),
+                        Button::new("rescan-models")
+                            .secondary()
+                            .label("새로고침")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.rescan_models(window, cx);
+                            })),
                     ),
             )
             .child(
-                widgets::card()
+                widgets::card(cx)
                     .when(local_rows.is_empty(), |card| {
                         card.child(
                             div()
                                 .p_3()
-                                .child(widgets::muted("아직 설치된 모델이 없습니다.")),
+                                .child(widgets::muted("아직 설치된 모델이 없습니다.", cx)),
                         )
                     })
                     .children(local_rows),
             )
-            .child(widgets::section_label("서버 로그"))
+            .child(widgets::section_label("서버 로그", cx))
             .child(
                 div()
                     .flex()
@@ -83,14 +86,14 @@ impl Root {
                     .id("engine-log")
                     .overflow_y_scroll()
                     .p_2()
-                    .rounded_md()
+                    .rounded(cx.theme().radius)
                     .border_1()
-                    .border_color(rgb(theme::BORDER))
-                    .bg(rgb(0x0b0e13))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
                     .children(log_lines.into_iter().map(|line| {
                         div()
                             .text_xs()
-                            .text_color(rgb(theme::MUTED))
+                            .text_color(cx.theme().muted_foreground)
                             .child(line)
                     })),
             )
@@ -122,101 +125,78 @@ impl Root {
             if let Some(rate) = self.download_rate() {
                 label.push_str(&format!(" · {}/s", models::human_size(rate as u64)));
             }
-            div()
-                .flex()
-                .flex_row()
+            h_flex()
                 .items_center()
                 .gap_2()
                 .child(
-                    div()
-                        .w(px(110.0))
-                        .h(px(5.0))
-                        .rounded_full()
-                        .bg(rgb(theme::PANEL_ALT))
-                        .child(
-                            div()
-                                .h(px(5.0))
-                                .rounded_full()
-                                .bg(rgb(theme::ACCENT))
-                                .w(relative(fraction)),
-                        ),
+                    Progress::new("catalog-download")
+                        .value(fraction * 100.0)
+                        .w(px(110.0)),
                 )
-                .child(widgets::muted(label))
+                .child(widgets::muted(label, cx))
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme::ERROR))
-                        .cursor_pointer()
-                        .on_mouse_up(MouseButton::Left, cx.listener(Self::on_cancel_download))
-                        .child("취소"),
+                    Button::new("cancel-download")
+                        .text()
+                        .compact()
+                        .label("취소")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.cancel_download(window, cx);
+                        })),
                 )
                 .into_any_element()
         } else if selected {
-            widgets::chip("사용 중", true).into_any_element()
+            Tag::success().child("사용 중").into_any_element()
         } else if installed {
-            let path = dest.clone();
-            widgets::secondary("사용")
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                        root.select_model(path.clone(), cx);
-                    }),
-                )
+            Button::new("use-model")
+                .secondary()
+                .label("사용")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_model(dest.clone(), window, cx);
+                }))
                 .into_any_element()
         } else {
-            widgets::primary("내려받기")
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                        root.start_download(option, cx);
-                    }),
-                )
+            Button::new("download-model")
+                .primary()
+                .label("내려받기")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.start_download(option, window, cx);
+                }))
                 .into_any_element()
         };
 
-        div()
-            .flex()
-            .flex_col()
+        v_flex()
             .gap_2()
             .px_3()
             .py_3()
             .border_b_1()
-            .border_color(rgb(theme::BORDER))
+            .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_row()
+                h_flex()
                     .items_center()
                     .justify_between()
                     .gap_3()
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_1()
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
+                                h_flex()
                                     .items_center()
                                     .gap_2()
                                     .child(
                                         div()
                                             .text_sm()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(rgb(theme::TEXT))
+                                            .font_weight(FontWeight::SEMIBOLD)
                                             .child(option.file_name()),
                                     )
                                     .when(option.recommended, |row| {
-                                        row.child(widgets::chip("권장", true))
+                                        row.child(Tag::primary().child("권장"))
                                     }),
                             )
-                            .child(widgets::muted(format!(
-                                "{} · {}",
-                                option.family,
-                                option.size_label()
-                            )))
-                            .child(widgets::muted(option.note)),
+                            .child(widgets::muted(
+                                format!("{} · {}", option.family, option.size_label()),
+                                cx,
+                            ))
+                            .child(widgets::muted(option.note, cx)),
                     )
                     .child(control),
             )
@@ -238,36 +218,30 @@ impl Root {
             .is_some_and(|current| current == &path);
 
         let control = if selected {
-            widgets::chip("사용 중", true).into_any_element()
+            Tag::success().child("사용 중").into_any_element()
         } else {
-            let target = path.clone();
-            widgets::secondary("사용")
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                        root.select_model(target.clone(), cx);
-                    }),
-                )
+            Button::new("use-local-model")
+                .secondary()
+                .label("사용")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.select_model(path.clone(), window, cx);
+                }))
                 .into_any_element()
         };
 
-        div()
-            .flex()
-            .flex_row()
+        h_flex()
             .items_center()
             .justify_between()
             .gap_3()
             .px_3()
             .py_2()
             .border_b_1()
-            .border_color(rgb(theme::BORDER))
+            .border_color(cx.theme().border)
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                v_flex()
                     .gap_1()
-                    .child(div().text_sm().text_color(rgb(theme::TEXT)).child(name))
-                    .child(widgets::muted(size)),
+                    .child(div().text_sm().child(name))
+                    .child(widgets::muted(size, cx)),
             )
             .child(control)
     }
@@ -280,72 +254,63 @@ impl Root {
             .unwrap_or_else(|| "찾을 수 없음".to_string());
         let runtime_dir = self.runtime_dir().display().to_string();
 
-        let actions = div()
-            .flex()
-            .flex_row()
+        let actions = h_flex()
             .items_center()
             .gap_2()
             .child(
-                widgets::secondary("runtime 폴더")
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_open_runtime_folder)),
+                Button::new("open-runtime")
+                    .secondary()
+                    .label("runtime 폴더")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let dir = this.runtime_dir();
+                        let _ = fs::create_dir_all(&dir);
+                        this.open_folder(&dir);
+                        cx.notify();
+                    })),
             )
             .child(
-                widgets::secondary("llama.cpp 릴리스")
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_open_releases)),
+                Button::new("open-releases")
+                    .secondary()
+                    .label("llama.cpp 릴리스")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_url(LLAMA_RELEASES);
+                        cx.notify();
+                    })),
             );
 
-        widgets::card()
+        widgets::card(cx)
+            .child(widgets::panel_header("엔진 런타임", None, cx))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
+                v_flex()
                     .gap_2()
                     .p_3()
+                    .child(widgets::setting_row("llama-server", widgets::muted(server, cx)))
                     .child(widgets::setting_row(
-                        "llama-server",
-                        widgets::muted(server),
+                        "런타임 폴더",
+                        widgets::muted(runtime_dir, cx),
                     ))
-                    .child(widgets::setting_row("런타임 폴더", widgets::muted(runtime_dir)))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_1()
                             .mt_2()
                             .child(widgets::muted(
                                 "1. llama.cpp 릴리스에서 Windows용 빌드(zip)를 내려받습니다.",
+                                cx,
                             ))
                             .child(widgets::muted(
                                 "2. 압축을 풀고 llama-server.exe와 함께 들어 있는 DLL들을 런타임 폴더에 넣습니다.",
+                                cx,
                             ))
                             .child(widgets::muted(
                                 "3. CPU만 쓰려면 기본 빌드를, NVIDIA GPU를 쓰려면 CUDA 빌드를 선택합니다.",
+                                cx,
                             ))
                             .child(widgets::muted(
                                 "4. 모델 탭에서 내려받은 뒤 엔진 시작을 누르면 준비가 끝납니다.",
+                                cx,
                             )),
                     )
                     .child(div().mt_2().child(actions)),
             )
-    }
-
-    fn on_rescan_models(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.rescan_models(cx);
-    }
-
-    fn on_cancel_download(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_download(cx);
-    }
-
-    fn on_open_runtime_folder(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let dir = self.runtime_dir();
-        let _ = fs::create_dir_all(&dir);
-        self.open_folder(&dir);
-        cx.notify();
-    }
-
-    fn on_open_releases(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.open_url(LLAMA_RELEASES);
-        cx.notify();
     }
 }

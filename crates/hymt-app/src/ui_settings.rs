@@ -1,26 +1,46 @@
 //! Settings: sampling, prompt construction, glossary and engine launch options.
 
-use gpui::{div, prelude::*, px, rgb, Context, Div, MouseButton, MouseUpEvent, Window};
-use hymt_core::{glossary, prompt::PromptLanguage, settings::Settings};
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::Textarea;
+use gpui_kit::component::radio::{Radio, RadioGroup};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{h_flex, v_flex, Selectable};
+use gpui_kit::prelude::*;
+use gpui_kit::{div, px, relative, AnyElement, Context, Div, SharedString, Window};
 
-use crate::{
-    root::{Root, PROMPT_LANGUAGES, STYLE_PRESETS},
-    theme,
-    ui_common::{panel_header, stepper},
-    widgets,
-};
+use hymt_core::{glossary, settings::Settings};
+
+use crate::root::{Root, PROMPT_LANGUAGES, STYLE_PRESETS};
+use crate::widgets;
 
 impl Root {
-    pub fn render_settings(&mut self, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let mut style_chips = Vec::new();
-        for (label, value) in STYLE_PRESETS.iter().copied() {
-            style_chips.push(self.style_option(label, value, cx));
-        }
+    pub fn render_settings(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let prompt_radios: Vec<Radio> = PROMPT_LANGUAGES
+            .iter()
+            .enumerate()
+            .map(|(index, (label, _))| {
+                Radio::new(SharedString::from(format!(
+                    "prompt-language-{index}"
+                )))
+                .label(*label)
+                .checked(self.settings.prompt.language == PROMPT_LANGUAGES[index].1)
+            })
+            .collect();
 
-        let mut prompt_chips = Vec::new();
-        for (label, language) in PROMPT_LANGUAGES.iter().copied() {
-            prompt_chips.push(self.prompt_option(label, language, cx));
-        }
+        let style_buttons: Vec<AnyElement> = STYLE_PRESETS
+            .iter()
+            .map(|(label, value)| {
+                Button::new(SharedString::from(format!("style-{label}")))
+                    .text()
+                    .label(*label)
+                    .selected(self.settings.prompt.style == *value)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings.prompt.style = value.to_string();
+                        this.auto_save(cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect();
 
         let (pairs, warnings) = glossary::parse_report(&self.settings.prompt.glossary);
         let glossary_status = if pairs.is_empty() {
@@ -28,168 +48,159 @@ impl Root {
         } else {
             format!("용어 {}개", pairs.len())
         };
-        let mut warning_lines = Vec::new();
-        for warning in warnings {
-            warning_lines.push(widgets::muted(warning));
-        }
+        let warning_lines: Vec<AnyElement> = warnings
+            .into_iter()
+            .map(|warning| widgets::muted(warning, cx).into_any_element())
+            .collect();
 
-        div()
-            .flex()
-            .flex_col()
+        let selected_prompt_language = PROMPT_LANGUAGES
+            .iter()
+            .position(|(_, language)| *language == self.settings.prompt.language)
+            .unwrap_or(0);
+
+        v_flex()
             .flex_1()
             .min_h_0()
             .id("settings-scroll")
             .overflow_y_scroll()
             .p_4()
             .gap_3()
-            .child(widgets::section_label("생성 파라미터"))
+            .child(widgets::section_label("생성 파라미터", cx))
             .child(
-                widgets::card()
-                    .child(panel_header(
+                widgets::card(cx)
+                    .child(widgets::panel_header(
                         "Hy-MT2 권장값에서 시작합니다",
                         Some(
-                            widgets::secondary("기본값").on_mouse_up(
-                                MouseButton::Left,
-                                cx.listener(Self::on_reset_settings),
-                            ),
+                            Button::new("reset-settings")
+                                .secondary()
+                                .label("기본값")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.on_reset_settings(window, cx);
+                                }))
+                                .into_any_element(),
                         ),
+                        cx,
                     ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_1()
                             .p_3()
                             .child(widgets::setting_row(
                                 "temperature",
-                                stepper(
-                                    format!("{:.2}", self.settings.generation.temperature),
-                                    cx.listener(Self::on_dec_temperature),
-                                    cx.listener(Self::on_inc_temperature),
-                                ),
+                                stepper("temperature", format!("{:.2}", self.settings.generation.temperature), cx),
                             ))
                             .child(widgets::setting_row(
                                 "top_p",
-                                stepper(
-                                    format!("{:.2}", self.settings.generation.top_p),
-                                    cx.listener(Self::on_dec_top_p),
-                                    cx.listener(Self::on_inc_top_p),
-                                ),
+                                stepper("top-p", format!("{:.2}", self.settings.generation.top_p), cx),
                             ))
                             .child(widgets::setting_row(
                                 "top_k",
-                                stepper(
-                                    format!("{}", self.settings.generation.top_k),
-                                    cx.listener(Self::on_dec_top_k),
-                                    cx.listener(Self::on_inc_top_k),
-                                ),
+                                stepper("top-k", format!("{}", self.settings.generation.top_k), cx),
                             ))
                             .child(widgets::setting_row(
                                 "repetition_penalty",
                                 stepper(
+                                    "repeat-penalty",
                                     format!("{:.2}", self.settings.generation.repeat_penalty),
-                                    cx.listener(Self::on_dec_repeat_penalty),
-                                    cx.listener(Self::on_inc_repeat_penalty),
+                                    cx,
                                 ),
                             ))
                             .child(widgets::setting_row(
                                 "max_tokens",
-                                stepper(
-                                    format!("{}", self.settings.generation.max_tokens),
-                                    cx.listener(Self::on_dec_max_tokens),
-                                    cx.listener(Self::on_inc_max_tokens),
-                                ),
+                                stepper("max-tokens", format!("{}", self.settings.generation.max_tokens), cx),
                             )),
                     ),
             )
-            .child(widgets::section_label("프롬프트"))
+            .child(widgets::section_label("프롬프트", cx))
             .child(
-                widgets::card()
-                    .child(panel_header("번역 지시문", None))
+                widgets::card(cx)
+                    .child(widgets::panel_header("번역 지시문", None, cx))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_3()
                             .p_3()
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
+                                v_flex()
                                     .gap_2()
-                                    .child(widgets::muted("지시문 언어"))
-                                    .child(div().flex().flex_row().gap_2().children(prompt_chips)),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_2()
-                                    .child(widgets::muted(
-                                        "스타일 (용어집보다 우선순위가 낮습니다)",
-                                    ))
+                                    .child(widgets::muted("지시문 언어", cx))
                                     .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .gap_2()
-                                            .flex_wrap()
-                                            .children(style_chips),
+                                        RadioGroup::new("prompt-language")
+                                            .children(prompt_radios)
+                                            .selected_index(Some(selected_prompt_language))
+                                            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                                                if let Some((_, language)) = PROMPT_LANGUAGES.get(*index) {
+                                                    this.settings.prompt.language = *language;
+                                                    this.auto_save(cx);
+                                                }
+                                            })),
                                     ),
                             )
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
+                                v_flex()
                                     .gap_2()
-                                    .child(self.toggle_chip(
-                                        "구분자 보존",
-                                        self.settings.prompt.preserve_delimiters,
+                                    .child(widgets::muted(
+                                        "스타일 (용어집보다 우선순위가 낮습니다)",
                                         cx,
-                                        Self::on_toggle_delimiters,
                                     ))
-                                    .child(self.toggle_chip(
-                                        "용어집 적용",
-                                        self.settings.prompt.use_glossary,
-                                        cx,
-                                        Self::on_toggle_glossary_switch,
-                                    )),
+                                    .child(
+                                        h_flex().gap_2().flex_wrap().children(style_buttons),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_6()
+                                    .child(
+                                        Switch::new("preserve-delimiters")
+                                            .label("구분자 보존")
+                                            .checked(self.settings.prompt.preserve_delimiters)
+                                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                                this.settings.prompt.preserve_delimiters = *checked;
+                                                this.auto_save(cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Switch::new("use-glossary")
+                                            .label("용어집 적용")
+                                            .checked(self.settings.prompt.use_glossary)
+                                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                                this.settings.prompt.use_glossary = *checked;
+                                                this.auto_save(cx);
+                                            })),
+                                    ),
                             ),
                     ),
             )
-            .child(widgets::section_label("용어집"))
+            .child(widgets::section_label("용어집", cx))
             .child(
-                widgets::card()
-                    .child(panel_header(format!("용어집 · {glossary_status}"), None))
+                widgets::card(cx)
+                    .child(widgets::panel_header(
+                        format!("용어집 · {glossary_status}"),
+                        None,
+                        cx,
+                    ))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_2()
                             .p_3()
                             .child(widgets::muted(
                                 "한 줄에 `원문 => 번역` 하나씩 입력합니다. 탭 구분도 됩니다.",
+                                cx,
                             ))
                             .child(
                                 div()
                                     .h(px(170.0))
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(rgb(theme::BORDER))
-                                    .bg(rgb(theme::PANEL_ALT))
-                                    .child(self.glossary_editor.clone()),
+                                    .child(Textarea::new(&self.glossary_editor).h(relative(1.0))),
                             )
                             .children(warning_lines),
                     ),
             )
-            .child(widgets::section_label("엔진"))
+            .child(widgets::section_label("엔진", cx))
             .child(
-                widgets::card()
-                    .child(panel_header("llama.cpp 실행 옵션", None))
+                widgets::card(cx)
+                    .child(widgets::panel_header("llama.cpp 실행 옵션", None, cx))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_1()
                             .p_3()
                             .child(widgets::setting_row(
@@ -197,151 +208,90 @@ impl Root {
                                 widgets::muted(
                                     self.current_model_name()
                                         .unwrap_or_else(|| "선택 없음".to_string()),
+                                    cx,
                                 ),
                             ))
                             .child(widgets::setting_row(
                                 "context",
-                                stepper(
-                                    format!("{}", self.settings.server.ctx_size),
-                                    cx.listener(Self::on_dec_ctx),
-                                    cx.listener(Self::on_inc_ctx),
-                                ),
+                                stepper("ctx", format!("{}", self.settings.server.ctx_size), cx),
                             ))
                             .child(widgets::setting_row(
                                 "threads",
-                                stepper(
-                                    format!("{}", self.settings.server.threads),
-                                    cx.listener(Self::on_dec_threads),
-                                    cx.listener(Self::on_inc_threads),
-                                ),
+                                stepper("threads", format!("{}", self.settings.server.threads), cx),
                             ))
                             .child(widgets::setting_row(
                                 "GPU layers (-1 = 자동)",
                                 stepper(
+                                    "gpu-layers",
                                     format!("{}", self.settings.server.gpu_layers),
-                                    cx.listener(Self::on_dec_gpu_layers),
-                                    cx.listener(Self::on_inc_gpu_layers),
+                                    cx,
                                 ),
                             ))
                             .child(widgets::setting_row(
                                 "port",
-                                widgets::muted(format!("{}", self.settings.server.port)),
+                                widgets::muted(format!("{}", self.settings.server.port), cx),
                             ))
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
+                                h_flex()
                                     .gap_2()
                                     .mt_2()
-                                    .child(widgets::secondary("설정 저장").on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(Self::on_save_settings),
-                                    ))
-                                    .child(widgets::primary("저장 후 엔진 재시작").on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(Self::on_restart_engine),
-                                    )),
+                                    .child(
+                                        Button::new("save-settings")
+                                            .secondary()
+                                            .label("설정 저장")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.save_settings_with_notice(window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("save-restart")
+                                            .primary()
+                                            .label("저장 후 엔진 재시작")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.on_restart_engine(window, cx);
+                                            })),
+                                    ),
                             ),
                     ),
             )
-            .child(widgets::section_label("다운로드"))
+            .child(widgets::section_label("다운로드", cx))
             .child(
-                widgets::card()
-                    .child(panel_header("모델 다운로드 서버", None))
+                widgets::card(cx)
+                    .child(widgets::panel_header("모델 다운로드 서버", None, cx))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
+                        v_flex()
                             .gap_2()
                             .p_3()
                             .child(widgets::muted(
                                 "네트워크 환경에 따라 Hugging Face 또는 미러를 선택하세요.",
+                                cx,
                             ))
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_2()
-                                    .child(self.base_url_option(
-                                        "Hugging Face",
-                                        "https://huggingface.co",
-                                        cx,
-                                    ))
-                                    .child(self.base_url_option(
-                                        "hf-mirror.com",
-                                        "https://hf-mirror.com",
-                                        cx,
-                                    )),
+                                h_flex().gap_2().children([
+                                    self.base_url_button("Hugging Face", "https://huggingface.co", cx),
+                                    self.base_url_button("hf-mirror.com", "https://hf-mirror.com", cx),
+                                ]),
                             )
-                            .child(widgets::muted(self.settings.download_base.clone())),
+                            .child(widgets::muted(self.settings.download_base.clone(), cx)),
                     ),
             )
     }
 
-    fn toggle_chip(
-        &self,
-        label: &'static str,
-        active: bool,
-        cx: &mut Context<Self>,
-        handler: fn(&mut Self, &MouseUpEvent, &mut Window, &mut Context<Self>),
-    ) -> Div {
-        widgets::chip(
-            if active {
-                format!("{label} · 켜짐")
-            } else {
-                label.to_string()
-            },
-            active,
-        )
-        .on_mouse_up(MouseButton::Left, cx.listener(handler))
-    }
-
-    fn style_option(
-        &self,
-        label: &'static str,
-        value: &'static str,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let active = self.settings.prompt.style == value;
-        widgets::chip(label, active).on_mouse_up(
-            MouseButton::Left,
-            cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                root.settings.prompt.style = value.to_string();
-                root.auto_save(cx);
-            }),
-        )
-    }
-
-    fn prompt_option(
-        &self,
-        label: &'static str,
-        language: PromptLanguage,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let active = self.settings.prompt.language == language;
-        widgets::chip(label, active).on_mouse_up(
-            MouseButton::Left,
-            cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                root.settings.prompt.language = language;
-                root.auto_save(cx);
-            }),
-        )
-    }
-
-    fn base_url_option(
+    fn base_url_button(
         &self,
         label: &'static str,
         url: &'static str,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Button {
         let active = self.settings.download_base == url;
-        widgets::chip(label, active).on_mouse_up(
-            MouseButton::Left,
-            cx.listener(move |root, _: &MouseUpEvent, _window, cx| {
-                root.settings.download_base = url.to_string();
-                root.auto_save(cx);
-            }),
-        )
+        Button::new(SharedString::from(format!("base-url-{label}")))
+            .text()
+            .label(label)
+            .selected(active)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.settings.download_base = url.to_string();
+                this.auto_save(cx);
+            }))
     }
 
     fn auto_save(&mut self, cx: &mut Context<Self>) {
@@ -350,133 +300,63 @@ impl Root {
         cx.notify();
     }
 
-    fn on_dec_temperature(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.temperature -= 0.05;
+    /// Applies one stepper step to the field named by `id`; ranges come from
+    /// [`Settings::sanitized`], which [`Self::auto_save`] runs afterwards.
+    fn adjust_setting(&mut self, id: &'static str, direction: f64, cx: &mut Context<Self>) {
+        match id {
+            "temperature" => self.settings.generation.temperature += direction * 0.05,
+            "top-p" => self.settings.generation.top_p += direction * 0.05,
+            "top-k" => self.settings.generation.top_k += direction as i32,
+            "repeat-penalty" => self.settings.generation.repeat_penalty += direction * 0.01,
+            "max-tokens" => {
+                self.settings.generation.max_tokens = (self.settings.generation.max_tokens as i64
+                    + direction as i64 * 128)
+                    .clamp(16, 8192) as u32;
+            }
+            "ctx" => {
+                self.settings.server.ctx_size =
+                    (self.settings.server.ctx_size as i64 + direction as i64 * 1024)
+                        .clamp(512, 32_768) as u32;
+            }
+            "threads" => {
+                self.settings.server.threads =
+                    (self.settings.server.threads as i64 + direction as i64).clamp(1, 64) as u32;
+            }
+            "gpu-layers" => {
+                self.settings.server.gpu_layers =
+                    (self.settings.server.gpu_layers + direction as i32).clamp(-1, 256);
+            }
+            _ => {}
+        }
         self.auto_save(cx);
     }
 
-    fn on_inc_temperature(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.temperature += 0.05;
-        self.auto_save(cx);
-    }
-
-    fn on_dec_top_p(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.top_p -= 0.05;
-        self.auto_save(cx);
-    }
-
-    fn on_inc_top_p(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.top_p += 0.05;
-        self.auto_save(cx);
-    }
-
-    fn on_dec_top_k(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.top_k = (self.settings.generation.top_k - 1).max(-1);
-        self.auto_save(cx);
-    }
-
-    fn on_inc_top_k(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.top_k = (self.settings.generation.top_k + 1).min(200);
-        self.auto_save(cx);
-    }
-
-    fn on_dec_repeat_penalty(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.repeat_penalty -= 0.01;
-        self.auto_save(cx);
-    }
-
-    fn on_inc_repeat_penalty(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.repeat_penalty += 0.01;
-        self.auto_save(cx);
-    }
-
-    fn on_dec_max_tokens(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.max_tokens =
-            self.settings.generation.max_tokens.saturating_sub(128);
-        self.auto_save(cx);
-    }
-
-    fn on_inc_max_tokens(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.generation.max_tokens =
-            self.settings.generation.max_tokens.saturating_add(128);
-        self.auto_save(cx);
-    }
-
-    fn on_dec_ctx(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.ctx_size = self.settings.server.ctx_size.saturating_sub(1024);
-        self.auto_save(cx);
-    }
-
-    fn on_inc_ctx(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.ctx_size = self.settings.server.ctx_size.saturating_add(1024);
-        self.auto_save(cx);
-    }
-
-    fn on_dec_threads(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.threads = self.settings.server.threads.saturating_sub(1);
-        self.auto_save(cx);
-    }
-
-    fn on_inc_threads(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.threads = self.settings.server.threads.saturating_add(1);
-        self.auto_save(cx);
-    }
-
-    fn on_dec_gpu_layers(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.gpu_layers = if self.settings.server.gpu_layers > 0 {
-            self.settings.server.gpu_layers - 1
-        } else {
-            -1
-        };
-        self.auto_save(cx);
-    }
-
-    fn on_inc_gpu_layers(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.server.gpu_layers = if self.settings.server.gpu_layers < 0 {
-            0
-        } else {
-            self.settings.server.gpu_layers + 1
-        };
-        self.auto_save(cx);
-    }
-
-    fn on_toggle_delimiters(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.prompt.preserve_delimiters = !self.settings.prompt.preserve_delimiters;
-        self.auto_save(cx);
-    }
-
-    fn on_toggle_glossary_switch(
-        &mut self,
-        _: &MouseUpEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.settings.prompt.use_glossary = !self.settings.prompt.use_glossary;
-        self.auto_save(cx);
-    }
-
-    fn on_reset_settings(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_reset_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let model = self.settings.server.model_path.clone();
         let base = self.settings.download_base.clone();
         self.settings = Settings::default();
         self.settings.server.model_path = model;
         self.settings.download_base = base;
         self.glossary_editor
-            .update(cx, |editor, cx| editor.clear(cx));
+            .update(cx, |state, cx| state.clean(window, cx));
         self.settings.prompt.glossary.clear();
         let _ = self.save_settings();
-        self.notice = Some(crate::root::Notice::info("설정을 기본값으로 되돌렸습니다."));
+        self.notify("설정을 기본값으로 되돌렸습니다.", false, window, cx);
         cx.notify();
     }
 
-    fn on_save_settings(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.save_settings_with_notice(cx);
-    }
-
-    fn on_restart_engine(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.settings.prompt.glossary = self.glossary_editor.read(cx).content().to_string();
+    fn on_restart_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.prompt.glossary = self.glossary_editor.read(cx).value().to_string();
         self.settings = self.settings.clone().sanitized();
         let _ = self.save_settings();
-        self.restart_engine(cx);
+        self.restart_engine(window, cx);
     }
 }
+
+/// A `- value +` control bound to a settings field, wired to [`Root::adjust_setting`].
+fn stepper(id: &'static str, value: String, cx: &mut Context<Root>) -> Div {
+    let dec = cx.listener(move |this, _, _, cx| this.adjust_setting(id, -1.0, cx));
+    let inc = cx.listener(move |this, _, _, cx| this.adjust_setting(id, 1.0, cx));
+    widgets::stepper(id, value, dec, inc)
+}
+

@@ -4,6 +4,9 @@
 //! process, translations run on a worker thread and stream deltas through a channel, and model
 //! downloads are a `curl.exe` child process whose progress is read from the `.part` file. A
 //! single GPUI task pumps those channels into the entity on every frame that needs it.
+//!
+//! Text editing uses GPUI Kit's `TextareaState`, language selection uses its `ComboboxState`,
+//! and transient messages are pushed as component notifications.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -13,7 +16,13 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext, Context, Entity, SharedString};
+use gpui_kit::component::combobox::{ComboboxEvent, ComboboxState};
+use gpui_kit::component::input::{InputEvent, TextareaState};
+use gpui_kit::component::notification::Notification;
+use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
+use gpui_kit::component::{h_flex, ActiveTheme, IndexPath, WindowExt};
+use gpui_kit::prelude::*;
+use gpui_kit::{div, App, AnyWindowHandle, ClipboardItem, Context, Entity, SharedString, Window};
 use hymt_core::{
     client::{self, Endpoint, GenerationParams, TranslationResult},
     engine::{self, EngineEvent, EngineState, LaunchConfig, Supervisor},
@@ -24,8 +33,6 @@ use hymt_core::{
     prompt::{self, PromptLanguage, PromptMode},
     settings::Settings,
 };
-
-use crate::text_area::TextArea;
 
 /// Top-level tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,38 +71,67 @@ pub const PROMPT_LANGUAGES: &[(&str, PromptLanguage)] = &[
     ("중국어 지시문", PromptLanguage::Chinese),
 ];
 
-/// A transient message shown above the status bar.
-#[derive(Clone, Debug)]
-pub struct Notice {
-    /// Message body.
-    pub text: String,
-    /// Whether it reports a failure.
-    pub is_error: bool,
-    created: Instant,
+/// One entry of the searchable language list.
+#[derive(Clone)]
+pub struct LanguageItem {
+    /// Backing catalogue entry.
+    pub language: &'static Language,
+    /// Language code, used as the combobox value.
+    pub code: String,
 }
 
-impl Notice {
-    /// Creates an informational notice.
-    pub fn info(text: impl Into<String>) -> Self {
-        Self::new(text, false)
+impl SearchableListItem for LanguageItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.language.name_ko.into()
     }
 
-    /// Creates a failure notice.
-    pub fn error(text: impl Into<String>) -> Self {
-        Self::new(text, true)
+    fn value(&self) -> &Self::Value {
+        &self.code
     }
 
-    fn new(text: impl Into<String>, is_error: bool) -> Self {
-        Self {
-            text: text.into(),
-            is_error,
-            created: Instant::now(),
+    fn matches(&self, query: &str) -> bool {
+        let query = query.trim();
+        if query.is_empty() {
+            return true;
         }
+        let lowered = query.to_lowercase();
+        self.language.name_ko.contains(query)
+            || self.language.name_en.to_lowercase().contains(&lowered)
+            || self.code.to_lowercase().contains(&lowered)
     }
 
-    fn expired(&self) -> bool {
-        self.created.elapsed() > Duration::from_secs(14)
+    fn render(&self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(div().text_sm().child(self.language.name_ko))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("{} · {}", self.code, self.language.name_en)),
+            )
     }
+}
+
+/// Every language, with the common pair pinned to the top.
+fn language_items() -> Vec<LanguageItem> {
+    let mut languages: Vec<&'static Language> = lang::LANGUAGES.iter().collect();
+    languages.sort_by_key(|language| {
+        let preferred = matches!(language.code, "ko" | "en" | "ja" | "zh");
+        (!preferred, language.name_ko)
+    });
+    languages
+        .into_iter()
+        .map(|language| LanguageItem {
+            language,
+            code: language.code.to_string(),
+        })
+        .collect()
 }
 
 /// Timing information for the last translation.
@@ -142,14 +178,16 @@ pub struct Root {
     pub settings: Settings,
     /// Active tab.
     pub tab: Tab,
-    /// Language picker overlay, if open.
-    pub picker: Option<LangSlot>,
     /// Multiline source editor.
-    pub source: Entity<TextArea>,
+    pub source: Entity<TextareaState>,
+    /// Streaming translation result, read-only.
+    pub output_state: Entity<TextareaState>,
     /// Glossary editor in settings.
-    pub glossary_editor: Entity<TextArea>,
-    /// Single-line filter in the language picker.
-    pub picker_filter: Entity<TextArea>,
+    pub glossary_editor: Entity<TextareaState>,
+    /// Source-language picker.
+    pub source_combo: Entity<ComboboxState<SearchableVec<LanguageItem>>>,
+    /// Target-language picker.
+    pub target_combo: Entity<ComboboxState<SearchableVec<LanguageItem>>>,
     /// Translated text.
     pub output: String,
     /// True when the last translation failed.
@@ -172,14 +210,22 @@ pub struct Root {
     pub models: Vec<PathBuf>,
     /// Active download.
     pub download: Option<Download>,
-    /// Transient message.
-    pub notice: Option<Notice>,
+    /// The window this root view lives in, used to raise notifications from the pump task.
+    pub window_handle: AnyWindowHandle,
+    /// Messages raised before the notification overlay was ready.
+    pending_notices: Vec<(String, bool)>,
+    /// True once the notification overlay can receive messages.
+    overlay_ready: bool,
     exe_dir: PathBuf,
 }
 
 impl Root {
     /// Builds the state, loads settings, scans models and starts the pump task.
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        window_handle: AnyWindowHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let paths = AppPaths::detect();
         let _ = paths.ensure();
         let (settings, settings_warning) = Settings::load_or_default(&paths.settings_file());
@@ -191,38 +237,80 @@ impl Root {
         let server_path =
             engine::discover_server(&exe_dir, settings.server.runtime_path.as_deref());
 
-        let source = cx.new(|cx| TextArea::new(cx, "번역할 텍스트를 입력하세요…", true));
-        let glossary_editor = cx.new(|cx| {
-            TextArea::new(
-                cx,
-                "예) GPUI => 지피유아이\n(한 줄에 `원문 => 번역` 하나)",
-                true,
-            )
+        let source = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("번역할 텍스트를 입력하세요…")
+                .rows(8)
         });
-        let picker_filter = cx.new(|cx| TextArea::new(cx, "언어 검색…", false));
+        let output_state = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("번역 결과가 여기에 표시됩니다.")
+                .rows(8)
+        });
+        let glossary_editor = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("예) GPUI => 지피유아이\n(한 줄에 `원문 => 번역` 하나)")
+                .rows(6)
+        });
+
+        let source_combo = Self::build_language_combo(&settings.source_lang, window, cx);
+        let target_combo = Self::build_language_combo(&settings.target_lang, window, cx);
 
         if !settings.prompt.glossary.is_empty() {
-            glossary_editor.update(cx, |editor, cx| {
-                editor.set_content(settings.prompt.glossary.clone(), cx)
-            });
+            let glossary = settings.prompt.glossary.clone();
+            glossary_editor.update(cx, |state, cx| state.set_value(glossary, window, cx));
         }
 
-        cx.observe(&source, |_, _, cx| cx.notify()).detach();
-        cx.observe(&glossary_editor, |this, editor, cx| {
-            this.settings.prompt.glossary = editor.read(cx).content().to_string();
-            cx.notify();
-        })
+        cx.subscribe_in(
+            &source,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter {
+                    secondary: true, ..
+                } = event
+                {
+                    this.translate(window, cx);
+                }
+            },
+        )
         .detach();
-        cx.observe(&picker_filter, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(
+            &glossary_editor,
+            window,
+            |this, editor, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.settings.prompt.glossary = editor.read(cx).value().to_string();
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &source_combo,
+            window,
+            |this, _, event: &ComboboxEvent<SearchableVec<LanguageItem>>, window, cx| {
+                this.on_language_event(LangSlot::Source, event, window, cx);
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &target_combo,
+            window,
+            |this, _, event: &ComboboxEvent<SearchableVec<LanguageItem>>, window, cx| {
+                this.on_language_event(LangSlot::Target, event, window, cx);
+            },
+        )
+        .detach();
 
         let mut root = Self {
             paths,
             settings,
             tab: Tab::Translate,
-            picker: None,
             source,
+            output_state,
             glossary_editor,
-            picker_filter,
+            source_combo,
+            target_combo,
             output: String::new(),
             output_is_error: false,
             translating: false,
@@ -235,23 +323,33 @@ impl Root {
             server_path,
             models,
             download: None,
-            notice: settings_warning.map(|warning| Notice::new(warning, true)),
+            window_handle,
+            pending_notices: Vec::new(),
+            overlay_ready: false,
             exe_dir,
         };
 
-        if root.settings.server.auto_start {
-            root.start_engine(cx);
+        if let Some(warning) = settings_warning {
+            root.notify(warning, true, window, cx);
         }
 
+        if root.settings.server.auto_start {
+            root.start_engine(window, cx);
+        }
+
+        let window_handle = root.window_handle;
         let task = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(80))
                 .await;
-            let alive = this
-                .update(cx, |root, cx| {
-                    if root.tick(cx) {
-                        cx.notify();
-                    }
+            let alive = window_handle
+                .update(cx, |_view, window, cx| {
+                    this.update(cx, |root, cx| {
+                        if root.tick(window, cx) {
+                            cx.notify();
+                        }
+                    })
+                    .is_ok()
                 })
                 .is_ok();
             if !alive {
@@ -263,9 +361,87 @@ impl Root {
         root
     }
 
+    fn build_language_combo(
+        code: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ComboboxState<SearchableVec<LanguageItem>>> {
+        let items = language_items();
+        let index = items
+            .iter()
+            .position(|item| item.code == code)
+            .unwrap_or(0);
+        cx.new(|cx| {
+            ComboboxState::new(
+                SearchableVec::new(items),
+                vec![IndexPath::default().row(index)],
+                window,
+                cx,
+            )
+        })
+    }
+
+    fn on_language_event(
+        &mut self,
+        slot: LangSlot,
+        event: &ComboboxEvent<SearchableVec<LanguageItem>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ComboboxEvent::Change(values) => {
+                if let Some(code) = values.last() {
+                    self.set_language(slot, code, window, cx);
+                }
+            }
+            ComboboxEvent::Confirm(_) => {
+                self.source.update(cx, |state, cx| state.focus(window, cx));
+            }
+        }
+    }
+
+    /// Raises a toast notification, or buffers it until the overlay is ready.
+    pub fn notify(
+        &mut self,
+        text: impl Into<String>,
+        is_error: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = text.into();
+        if self.overlay_ready {
+            self.push_notification(text, is_error, window, cx);
+        } else {
+            self.pending_notices.push((text, is_error));
+        }
+    }
+
+    fn push_notification(
+        &mut self,
+        text: String,
+        is_error: bool,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let notification = if is_error {
+            Notification::error(text)
+        } else {
+            Notification::info(text)
+        };
+        window.push_notification(notification, _cx);
+    }
+
     /// Drains background channels. Returns true when the UI needs a redraw.
-    pub fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let mut changed = false;
+
+        if !self.overlay_ready {
+            self.overlay_ready = true;
+            let pending = std::mem::take(&mut self.pending_notices);
+            for (text, is_error) in pending {
+                self.push_notification(text, is_error, window, cx);
+            }
+        }
 
         // Engine events.
         let mut events = Vec::new();
@@ -279,7 +455,7 @@ impl Root {
                 EngineEvent::State(state) => {
                     if state != self.engine_state {
                         if let EngineState::Failed(message) = &state {
-                            self.notice = Some(Notice::new(message.clone(), true));
+                            self.notify(message.clone(), true, window, cx);
                         }
                         self.engine_state = state;
                         changed = true;
@@ -302,6 +478,7 @@ impl Root {
                 match receiver.try_recv() {
                     Ok(TranslateEvent::Delta(delta)) => {
                         self.output.push_str(&delta);
+                        self.sync_output(window, cx);
                         changed = true;
                     }
                     Ok(TranslateEvent::Done(result)) => {
@@ -328,16 +505,17 @@ impl Root {
                                     }),
                                 });
                                 if result.cancelled {
-                                    self.notice = Some(Notice::new("번역을 중단했습니다.", false));
+                                    self.notify("번역을 중단했습니다.", false, window, cx);
                                 }
                             }
                             Err(message) => {
                                 self.output = message.clone();
                                 self.output_is_error = true;
                                 self.stats = None;
-                                self.notice = Some(Notice::new(message, true));
+                                self.notify(message, true, window, cx);
                             }
                         }
+                        self.sync_output(window, cx);
                         changed = true;
                         break;
                     }
@@ -367,22 +545,26 @@ impl Root {
                                 self.models = engine::scan_gguf(&self.paths.models_dir());
                                 self.settings.server.model_path = Some(download.dest.clone());
                                 let _ = self.save_settings();
-                                self.notice = Some(Notice::new(
+                                self.notify(
                                     format!(
                                         "{} 다운로드 완료. 모델을 불러옵니다.",
                                         download.option.file_name()
                                     ),
                                     false,
-                                ));
+                                    window,
+                                    cx,
+                                );
                                 if self.settings.server.auto_start {
-                                    self.restart_engine(cx);
+                                    self.restart_engine(window, cx);
                                 }
                             }
                             Err(err) => {
-                                self.notice = Some(Notice::new(
+                                self.notify(
                                     format!("다운로드한 파일을 옮길 수 없습니다: {err}"),
                                     true,
-                                ));
+                                    window,
+                                    cx,
+                                );
                             }
                         }
                     } else {
@@ -394,12 +576,14 @@ impl Root {
                         } else {
                             format!("curl 종료 코드 {:?}", status.code())
                         };
-                        self.notice = Some(Notice::new(
+                        self.notify(
                             format!(
                                 "다운로드가 완료되지 않았습니다 ({detail}). 모델 탭에서 다시 시도하세요."
                             ),
                             true,
-                        ));
+                            window,
+                            cx,
+                        );
                     }
                     changed = true;
                 }
@@ -413,22 +597,30 @@ impl Root {
                     self.download = Some(download);
                 }
                 Err(err) => {
-                    self.notice = Some(Notice::new(format!("다운로드 상태 오류: {err}"), true));
+                    self.notify(format!("다운로드 상태 오류: {err}"), true, window, cx);
                     changed = true;
                 }
             }
         }
 
-        if self.notice.as_ref().is_some_and(Notice::expired) {
-            self.notice = None;
-            changed = true;
-        }
-
         changed
     }
 
+    /// Mirrors the translation text into the read-only output editor.
+    fn sync_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.output.clone();
+        self.output_state
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
     /// Updates the language on one side of the pair.
-    pub fn set_language(&mut self, slot: LangSlot, code: &str, cx: &mut Context<Self>) {
+    pub fn set_language(
+        &mut self,
+        slot: LangSlot,
+        code: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if lang::by_code(code).is_none() {
             return;
         }
@@ -453,22 +645,29 @@ impl Root {
             }
         }
         let _ = self.save_settings();
+        self.sync_language_combos(window, cx);
         cx.notify();
     }
 
     /// Swaps source and target languages.
-    pub fn swap_languages(&mut self, cx: &mut Context<Self>) {
+    pub fn swap_languages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         std::mem::swap(
             &mut self.settings.source_lang,
             &mut self.settings.target_lang,
         );
         let _ = self.save_settings();
+        self.sync_language_combos(window, cx);
         cx.notify();
     }
 
-    /// Looks up the selected source language.
-    pub fn source_language(&self) -> &'static Language {
-        lang::by_code(&self.settings.source_lang).unwrap_or_else(lang::default_source)
+    /// Reflects the current language pair in both comboboxes.
+    fn sync_language_combos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let source = self.settings.source_lang.clone();
+        let target = self.settings.target_lang.clone();
+        self.source_combo
+            .update(cx, |combo, cx| combo.set_selected_values(&[source], window, cx));
+        self.target_combo
+            .update(cx, |combo, cx| combo.set_selected_values(&[target], window, cx));
     }
 
     /// Looks up the selected target language.
@@ -498,13 +697,13 @@ impl Root {
     }
 
     /// Starts a streaming translation of the current input.
-    pub fn translate(&mut self, cx: &mut Context<Self>) {
+    pub fn translate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.translating {
             return;
         }
-        let source = self.source.read(cx).content().to_string();
+        let source = self.source.read(cx).value().to_string();
         if let Err(message) = prompt::validate_source(&source) {
-            self.notice = Some(Notice::new(message, true));
+            self.notify(message, true, window, cx);
             cx.notify();
             return;
         }
@@ -516,7 +715,7 @@ impl Root {
                 }
                 _ => "모델 서버가 중지되어 있습니다. 모델 탭에서 시작하세요.",
             };
-            self.notice = Some(Notice::new(message, true));
+            self.notify(message, true, window, cx);
             cx.notify();
             return;
         }
@@ -530,7 +729,7 @@ impl Root {
         self.output_is_error = false;
         self.stats = None;
         self.translating = true;
-        self.notice = None;
+        self.sync_output(window, cx);
 
         let (sender, receiver) = mpsc::channel();
         self.translate_rx = Some(receiver);
@@ -564,47 +763,47 @@ impl Root {
     }
 
     /// Copies the translation to the clipboard.
-    pub fn copy_output(&mut self, cx: &mut Context<Self>) {
+    pub fn copy_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.output.trim().is_empty() {
             return;
         }
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(self.output.clone()));
-        self.notice = Some(Notice::new("번역문을 복사했습니다.", false));
+        cx.write_to_clipboard(ClipboardItem::new_string(self.output.clone()));
+        self.notify("번역문을 복사했습니다.", false, window, cx);
         cx.notify();
     }
 
     /// Replaces the input with the translation (handy for back-and-forth work).
-    pub fn output_to_input(&mut self, cx: &mut Context<Self>) {
+    pub fn output_to_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.output.trim().is_empty() {
             return;
         }
         let text = self.output.clone();
         self.source
-            .update(cx, |editor, cx| editor.set_content(text, cx));
-        self.swap_languages(cx);
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+        self.swap_languages(window, cx);
     }
 
     /// Pastes the clipboard into the source editor.
-    pub fn paste_into_source(&mut self, cx: &mut Context<Self>) {
+    pub fn paste_into_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.source
-                .update(cx, |editor, cx| editor.set_content(text, cx));
+                .update(cx, |state, cx| state.set_value(text, window, cx));
         }
         cx.notify();
     }
 
     /// Clears both editors.
-    pub fn clear_all(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(cancel) = self.cancel.take() {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.translate_rx = None;
         self.translating = false;
-        self.source.update(cx, |editor, cx| editor.clear(cx));
+        self.source.update(cx, |state, cx| state.clean(window, cx));
         self.output.clear();
         self.output_is_error = false;
         self.stats = None;
-        self.notice = None;
+        self.sync_output(window, cx);
         cx.notify();
     }
 
@@ -614,36 +813,33 @@ impl Root {
     }
 
     /// Persists settings and reports the result in the UI.
-    pub fn save_settings_with_notice(&mut self, cx: &mut Context<Self>) {
-        self.settings.prompt.glossary = self.glossary_editor.read(cx).content().to_string();
+    pub fn save_settings_with_notice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings.prompt.glossary = self.glossary_editor.read(cx).value().to_string();
         match self.save_settings() {
-            Ok(()) => self.notice = Some(Notice::new("설정을 저장했습니다.", false)),
-            Err(err) => {
-                self.notice = Some(Notice::new(
-                    format!("설정을 저장할 수 없습니다: {err}"),
-                    true,
-                ))
-            }
+            Ok(()) => self.notify("설정을 저장했습니다.", false, window, cx),
+            Err(err) => self.notify(format!("설정을 저장할 수 없습니다: {err}"), true, window, cx),
         }
         cx.notify();
     }
 
     /// Launches the managed llama.cpp server.
-    pub fn start_engine(&mut self, cx: &mut Context<Self>) {
+    pub fn start_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.engine_state.is_busy() {
             return;
         }
-        let Some(config) = self.launch_config() else {
+        let Some(config) = self.launch_config(window, cx) else {
             return;
         };
         if self.engine.is_none() {
             match Supervisor::spawn(self.paths.engine_log()) {
                 Ok(supervisor) => self.engine = Some(supervisor),
                 Err(err) => {
-                    self.notice = Some(Notice::new(
+                    self.notify(
                         format!("엔진 스레드를 시작할 수 없습니다: {err}"),
                         true,
-                    ));
+                        window,
+                        cx,
+                    );
                     cx.notify();
                     return;
                 }
@@ -666,22 +862,28 @@ impl Root {
     }
 
     /// Restarts with the current settings.
-    pub fn restart_engine(&mut self, cx: &mut Context<Self>) {
+    pub fn restart_engine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(supervisor) = &self.engine {
             supervisor.stop();
         }
         self.engine_state = EngineState::Stopped;
-        self.start_engine(cx);
+        self.start_engine(window, cx);
     }
 
-    fn launch_config(&mut self) -> Option<LaunchConfig> {
+    fn launch_config(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<LaunchConfig> {
         let Some(server_path) =
             engine::discover_server(&self.exe_dir, self.settings.server.runtime_path.as_deref())
         else {
-            self.notice = Some(Notice::new(
+            self.notify(
                 "llama-server를 찾을 수 없습니다. 모델 탭의 설치 안내를 따라 runtime 폴더에 넣어 주세요.",
                 true,
-            ));
+                window,
+                cx,
+            );
             return None;
         };
         self.server_path = Some(server_path.clone());
@@ -693,10 +895,12 @@ impl Root {
             .clone()
             .filter(|path| path.is_file());
         let Some(model_path) = configured.or_else(|| engine::pick_model(&self.models)) else {
-            self.notice = Some(Notice::new(
+            self.notify(
                 "사용할 GGUF 모델이 없습니다. 모델 탭에서 Hy-MT2 모델을 내려받으세요.",
                 true,
-            ));
+                window,
+                cx,
+            );
             return None;
         };
         self.settings.server.model_path = Some(model_path.clone());
@@ -713,7 +917,7 @@ impl Root {
     }
 
     /// Re-scans the models folder.
-    pub fn rescan_models(&mut self, cx: &mut Context<Self>) {
+    pub fn rescan_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.models = engine::scan_gguf(&self.paths.models_dir());
         let missing = self
             .settings
@@ -724,24 +928,36 @@ impl Root {
         if missing || self.settings.server.model_path.is_none() {
             self.settings.server.model_path = engine::pick_model(&self.models);
         }
-        self.notice = Some(Notice::new(
+        self.notify(
             format!("모델 {}개를 찾았습니다.", self.models.len()),
             false,
-        ));
+            window,
+            cx,
+        );
         cx.notify();
     }
 
     /// Picks a locally installed model.
-    pub fn select_model(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub fn select_model(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.settings.server.model_path = Some(path);
         let _ = self.save_settings();
-        self.restart_engine(cx);
+        self.restart_engine(window, cx);
     }
 
     /// Starts downloading a catalogue entry with `curl.exe`.
-    pub fn start_download(&mut self, option: &'static ModelOption, cx: &mut Context<Self>) {
+    pub fn start_download(
+        &mut self,
+        option: &'static ModelOption,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.download.is_some() {
-            self.notice = Some(Notice::new("이미 다운로드가 진행 중입니다.", true));
+            self.notify("이미 다운로드가 진행 중입니다.", true, window, cx);
             cx.notify();
             return;
         }
@@ -749,15 +965,17 @@ impl Root {
         if dest.is_file() {
             self.settings.server.model_path = Some(dest);
             let _ = self.save_settings();
-            self.notice = Some(Notice::new("이미 내려받은 모델입니다.", false));
+            self.notify("이미 내려받은 모델입니다.", false, window, cx);
             cx.notify();
             return;
         }
         if let Err(err) = fs::create_dir_all(self.paths.models_dir()) {
-            self.notice = Some(Notice::new(
+            self.notify(
                 format!("모델 폴더를 만들 수 없습니다: {err}"),
                 true,
-            ));
+                window,
+                cx,
+            );
             cx.notify();
             return;
         }
@@ -787,29 +1005,33 @@ impl Root {
                     downloaded: 0,
                     started: Instant::now(),
                 });
-                self.notice = Some(Notice::new(
+                self.notify(
                     format!("{} 내려받는 중…", option.file_name()),
                     false,
-                ));
+                    window,
+                    cx,
+                );
             }
             Err(err) => {
-                self.notice = Some(Notice::new(
+                self.notify(
                     format!(
                         "curl.exe를 실행할 수 없습니다: {err}. Windows 11의 기본 curl이 필요합니다."
                     ),
                     true,
-                ));
+                    window,
+                    cx,
+                );
             }
         }
         cx.notify();
     }
 
     /// Aborts the running download.
-    pub fn cancel_download(&mut self, cx: &mut Context<Self>) {
+    pub fn cancel_download(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(mut download) = self.download.take() {
             let _ = download.child.kill();
             let _ = download.child.wait();
-            self.notice = Some(Notice::new("다운로드를 취소했습니다.", false));
+            self.notify("다운로드를 취소했습니다.", false, window, cx);
         }
         cx.notify();
     }
@@ -872,67 +1094,9 @@ impl Root {
         }
     }
 
-    /// Status color for the engine dot.
-    pub fn engine_color(&self) -> u32 {
-        match &self.engine_state {
-            EngineState::Ready => crate::theme::OK,
-            EngineState::Starting => crate::theme::WARN,
-            EngineState::Stopped => crate::theme::DISABLED,
-            EngineState::Failed(_) => crate::theme::ERROR,
-        }
-    }
-
     /// True when the glossary currently yields at least one pair.
     pub fn glossary_count(&self) -> usize {
         glossary::parse(&self.settings.prompt.glossary).len()
-    }
-
-    /// Text of the language filter.
-    pub fn filter_text(&self, cx: &Context<Self>) -> String {
-        self.picker_filter.read(cx).content().to_lowercase()
-    }
-
-    /// Languages matching the picker filter.
-    pub fn filtered_languages(&self, cx: &Context<Self>) -> Vec<&'static Language> {
-        let query = self.filter_text(cx);
-        let query = query.trim();
-        let mut languages: Vec<&'static Language> = lang::LANGUAGES
-            .iter()
-            .filter(|language| {
-                query.is_empty()
-                    || language.name_ko.contains(query)
-                    || language.name_en.to_lowercase().contains(query)
-                    || language.code.to_lowercase().contains(query)
-            })
-            .collect();
-        // Keep Korean, English and the current pair at the top for quick access.
-        languages.sort_by_key(|language| {
-            let preferred = matches!(language.code, "ko" | "en" | "ja" | "zh")
-                || language.code == self.settings.source_lang
-                || language.code == self.settings.target_lang;
-            (!preferred, language.name_ko)
-        });
-        languages
-    }
-
-    /// Opens the picker and focuses its filter.
-    pub fn open_picker(
-        &mut self,
-        slot: LangSlot,
-        window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker = Some(slot);
-        self.picker_filter.update(cx, |editor, cx| editor.clear(cx));
-        self.picker_filter
-            .update(cx, |editor, cx| editor.focus(window, cx));
-        cx.notify();
-    }
-
-    /// Closes the picker.
-    pub fn close_picker(&mut self, cx: &mut Context<Self>) {
-        self.picker = None;
-        cx.notify();
     }
 
     /// Summary line for the status bar.
@@ -953,15 +1117,6 @@ impl Root {
             _ if self.translating => "번역 중…".to_string(),
             _ => "Ctrl+Enter로 번역".to_string(),
         }
-    }
-
-    /// Label to show on the source/target chip.
-    pub fn language_label(&self, slot: LangSlot) -> SharedString {
-        let language = match slot {
-            LangSlot::Source => self.source_language(),
-            LangSlot::Target => self.target_language(),
-        };
-        language.name_ko.into()
     }
 }
 

@@ -1,33 +1,30 @@
 //! The translation workspace: language pair, source editor, streaming output and actions.
 
-use gpui::{
-    div, prelude::*, px, relative, rgb, Context, Div, IntoElement, MouseButton, MouseUpEvent,
-    Window,
-};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::combobox::Combobox;
+use gpui_kit::component::input::Textarea;
+use gpui_kit::component::progress::Progress;
+use gpui_kit::component::{h_flex, v_flex, Disableable, Selectable};
+use gpui_kit::prelude::*;
+use gpui_kit::{div, px, relative, rems, Context, Div, Window};
 
-use crate::{
-    root::{LangSlot, Root, STYLE_PRESETS},
-    theme,
-    ui_common::panel_header,
-    widgets,
-};
+use crate::root::{Root, STYLE_PRESETS};
+use crate::widgets;
 
 impl Root {
     pub fn render_translate(&mut self, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_col()
+        v_flex()
             .flex_1()
             .min_h_0()
             .p_4()
             .gap_3()
             .child(self.render_language_bar(cx))
             .child(
-                div()
-                    .flex()
-                    .flex_row()
+                h_flex()
                     .flex_1()
                     .min_h_0()
+                    .min_w_0()
                     .gap_3()
                     .child(self.render_source_panel(cx))
                     .child(self.render_output_panel(cx)),
@@ -36,309 +33,178 @@ impl Root {
     }
 
     fn render_language_bar(&self, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_row()
+        h_flex()
             .items_center()
             .gap_2()
             .flex_shrink_0()
-            .child(self.language_chip(LangSlot::Source, cx))
+            .flex_wrap()
             .child(
-                div()
-                    .size(px(32.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(rgb(theme::BORDER))
-                    .bg(rgb(theme::PANEL_ALT))
-                    .text_color(rgb(theme::MUTED))
-                    .text_sm()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_swap_languages))
-                    .child("⇄"),
+                Combobox::new(&self.source_combo)
+                    .menu_max_h(rems(16.0))
+                    .w(px(200.0)),
             )
-            .child(self.language_chip(LangSlot::Target, cx))
+            .child(
+                Button::new("swap-langs")
+                    .ghost()
+                    .compact()
+                    .icon(IconName::ArrowLeftRight)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.swap_languages(window, cx);
+                    })),
+            )
+            .child(
+                Combobox::new(&self.target_combo)
+                    .menu_max_h(rems(16.0))
+                    .w(px(200.0)),
+            )
             .child(div().flex_1())
-            .child(self.glossary_chip(cx))
-            .child(self.style_chip(cx))
+            .child(self.glossary_button(cx))
+            .child(self.style_button(cx))
     }
 
-    fn language_chip(&self, slot: LangSlot, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .h(px(36.0))
-            .w(px(200.0))
-            .px_3()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(theme::BORDER))
-            .bg(rgb(theme::PANEL_ALT))
-            .text_sm()
-            .text_color(rgb(theme::TEXT))
-            .cursor_pointer()
-            .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(move |root, _: &MouseUpEvent, window, cx| {
-                    root.open_picker(slot, window, cx);
-                }),
-            )
-            .child(self.language_label(slot))
-            .child(div().text_xs().text_color(rgb(theme::MUTED)).child("▾"))
+    fn glossary_button(&self, cx: &Context<Self>) -> Button {
+        let count = self.glossary_count();
+        let active = self.settings.prompt.use_glossary && count > 0;
+        let label = if count == 0 {
+            "용어집 없음".to_string()
+        } else if active {
+            format!("용어집 {count}개 사용 중")
+        } else {
+            format!("용어집 {count}개")
+        };
+        Button::new("glossary-toggle")
+            .label(label)
+            .selected(active)
+            .on_click(cx.listener(|this, _, window, cx| this.on_toggle_glossary(window, cx)))
     }
 
-    fn style_chip(&self, cx: &mut Context<Self>) -> Div {
+    fn style_button(&self, cx: &Context<Self>) -> Button {
         let current = self.settings.prompt.style.trim();
         let label = STYLE_PRESETS
             .iter()
             .find(|(_, value)| *value == current)
             .map(|(label, _)| *label)
             .unwrap_or("스타일 직접 지정");
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .h(px(36.0))
-            .px_3()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(if current.is_empty() {
-                theme::BORDER
-            } else {
-                theme::ACCENT
-            }))
-            .bg(rgb(if current.is_empty() {
-                theme::PANEL_ALT
-            } else {
-                theme::ACCENT_SOFT
-            }))
-            .text_sm()
-            .text_color(rgb(theme::TEXT))
-            .cursor_pointer()
-            .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_cycle_style))
-            .child(format!("스타일 · {label}"))
+        Button::new("style-cycle")
+            .label(format!("스타일 · {label}"))
+            .on_click(cx.listener(|this, _, _, cx| this.on_cycle_style(cx)))
     }
 
-    fn glossary_chip(&self, cx: &mut Context<Self>) -> Div {
-        let count = self.glossary_count();
-        let active = self.settings.prompt.use_glossary && count > 0;
-        div()
-            .flex()
-            .flex_row()
+    fn render_source_panel(&self, cx: &Context<Self>) -> Div {
+        let actions = h_flex()
             .items_center()
-            .gap_2()
-            .h(px(36.0))
-            .px_3()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(if active { theme::ACCENT } else { theme::BORDER }))
-            .bg(rgb(if active {
-                theme::ACCENT_SOFT
-            } else {
-                theme::PANEL_ALT
-            }))
-            .text_sm()
-            .text_color(rgb(if count == 0 {
-                theme::MUTED
-            } else {
-                theme::TEXT
-            }))
-            .cursor_pointer()
-            .hover(|style| style.bg(rgb(theme::PANEL_HOVER)))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_toggle_glossary))
-            .child(if count == 0 {
-                "용어집 없음".to_string()
-            } else if active {
-                format!("용어집 {count}개 사용 중")
-            } else {
-                format!("용어집 {count}개")
-            })
-    }
-
-    fn render_source_panel(&self, cx: &mut Context<Self>) -> Div {
-        let actions = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
+            .gap_1()
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(rgb(theme::TEXT)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_paste_click))
-                    .child("붙여넣기"),
+                Button::new("paste")
+                    .text()
+                    .compact()
+                    .label("붙여넣기")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.paste_into_source(window, cx);
+                    })),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(rgb(theme::TEXT)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_clear_click))
-                    .child("지우기"),
+                Button::new("clear")
+                    .text()
+                    .compact()
+                    .label("지우기")
+                    .on_click(cx.listener(|this, _, window, cx| this.clear_all(window, cx))),
             );
 
-        widgets::card()
+        widgets::card(cx)
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(panel_header("원문", Some(actions)))
-            .child(div().flex_1().min_h_0().min_w_0().child(self.source.clone()))
+            .child(widgets::panel_header("원문", Some(actions.into_any_element()), cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(Textarea::new(&self.source).h(relative(1.0)).bordered(false)),
+            )
     }
 
-    fn render_output_panel(&self, cx: &mut Context<Self>) -> Div {
-        let actions = div()
-            .flex()
-            .flex_row()
+    fn render_output_panel(&self, cx: &Context<Self>) -> Div {
+        let actions = h_flex()
             .items_center()
-            .gap_2()
+            .gap_1()
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(rgb(theme::TEXT)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_output_to_input))
-                    .child("입력으로"),
+                Button::new("to-input")
+                    .text()
+                    .compact()
+                    .label("입력으로")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.output_to_input(window, cx);
+                    })),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme::MUTED))
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(rgb(theme::TEXT)))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::on_copy_click))
-                    .child("복사"),
+                Button::new("copy")
+                    .text()
+                    .compact()
+                    .label("복사")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.copy_output(window, cx);
+                    })),
             );
 
-        let body = if self.output.is_empty() {
-            div()
-                .flex_1()
-                .min_h_0()
-                .p_3()
-                .child(widgets::muted(if self.translating {
-                    "번역을 생성하는 중…"
-                } else {
-                    "번역 결과가 여기에 표시됩니다."
-                }))
-                .into_any_element()
-        } else {
-            div()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .id("output-scroll")
-                .overflow_y_scroll()
-                .child(
-                    div()
-                        .w_full()
-                        .p_3()
-                        .text_sm()
-                        .text_color(rgb(if self.output_is_error {
-                            theme::ERROR
-                        } else {
-                            theme::TEXT
-                        }))
-                        .child(self.output.clone()),
-                )
-                .into_any_element()
-        };
-
-        widgets::card()
+        widgets::card(cx)
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(panel_header("번역", Some(actions)))
-            .child(body)
+            .child(widgets::panel_header("번역", Some(actions.into_any_element()), cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(Textarea::new(&self.output_state).h(relative(1.0)).readonly(true)),
+            )
     }
 
-    fn render_action_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn render_action_bar(&self, cx: &Context<Self>) -> Div {
         let primary = if self.translating {
-            widgets::secondary("중단")
-                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_cancel_click))
+            Button::new("translate-action")
+                .danger()
+                .label("중단")
+                .on_click(cx.listener(|this, _, _, cx| this.cancel_translation(cx)))
         } else if self.engine_state.is_ready() {
-            widgets::primary("번역  Ctrl+Enter")
-                .on_mouse_up(MouseButton::Left, cx.listener(Self::on_translate_click))
+            Button::new("translate-action")
+                .primary()
+                .label("번역  Ctrl+Enter")
+                .on_click(cx.listener(|this, _, window, cx| this.translate(window, cx)))
         } else {
-            widgets::disabled("모델 준비 중…")
+            Button::new("translate-action")
+                .primary()
+                .disabled(true)
+                .label("모델 준비 중…")
         };
 
-        let progress = match &self.download_progress() {
-            Some(progress) => div()
-                .flex()
-                .flex_row()
+        let progress = match self.download_progress() {
+            Some(progress) => h_flex()
                 .items_center()
                 .gap_2()
                 .child(
-                    div()
-                        .w(px(120.0))
-                        .h(px(4.0))
-                        .rounded_full()
-                        .bg(rgb(theme::PANEL_ALT))
-                        .child(
-                            div()
-                                .h(px(4.0))
-                                .rounded_full()
-                                .bg(rgb(theme::ACCENT))
-                                .w(relative(progress.fraction())),
-                        ),
+                    Progress::new("download-progress")
+                        .value(progress.fraction() * 100.0)
+                        .w(px(140.0)),
                 )
-                .child(widgets::muted(progress.label()))
+                .child(widgets::muted(progress.label(), cx))
                 .into_any_element(),
             None => div().into_any_element(),
         };
 
-        div()
-            .flex()
-            .flex_row()
+        h_flex()
             .items_center()
             .gap_3()
             .flex_shrink_0()
             .child(progress)
             .child(div().flex_1())
-            .child(widgets::muted(self.stats_line()))
+            .child(widgets::muted(self.stats_line(), cx))
             .child(primary)
     }
 
-    fn on_translate_click(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.translate(cx);
-    }
-
-    fn on_cancel_click(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_translation(cx);
-    }
-
-    fn on_copy_click(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.copy_output(cx);
-    }
-
-    fn on_clear_click(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.clear_all(cx);
-    }
-
-    fn on_paste_click(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.paste_into_source(cx);
-    }
-
-    fn on_output_to_input(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.output_to_input(cx);
-    }
-
-    fn on_swap_languages(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.swap_languages(cx);
-    }
-
-    fn on_cycle_style(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_cycle_style(&mut self, cx: &mut Context<Self>) {
         let current = self.settings.prompt.style.trim().to_string();
         let index = STYLE_PRESETS
             .iter()
@@ -350,11 +216,14 @@ impl Root {
         cx.notify();
     }
 
-    fn on_toggle_glossary(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_glossary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.glossary_count() == 0 {
-            self.notice = Some(crate::root::Notice::error(
+            self.notify(
                 "용어집이 비어 있습니다. 설정 탭에서 `원문 => 번역` 형식으로 추가하세요.",
-            ));
+                true,
+                window,
+                cx,
+            );
             cx.notify();
             return;
         }
