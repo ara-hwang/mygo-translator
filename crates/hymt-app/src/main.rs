@@ -8,6 +8,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod autostart;
+mod capture;
+mod hotkey;
 mod root;
 mod smooth_scroll;
 mod tray;

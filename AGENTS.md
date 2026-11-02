@@ -7,8 +7,8 @@ Windows 11용 오프라인 번역기 HyMT 저장소. 제품 소개·사용법은
 ```powershell
 cargo build                      # 개발 빌드
 cargo run --release              # 앱 실행 (GPUI DirectX 셰이더 컴파일로 fxc.exe 필요, 아래 참고)
-cargo test -p hymt-core          # 코어 테스트 전부 여기 (현재 65개)
-cargo test -p hymt-app           # 앱 단위 테스트 (트레이 아이콘, 자동 실행 경로 등, 현재 11개)
+cargo test -p hymt-core          # 코어 테스트 전부 여기 (현재 73개)
+cargo test -p hymt-app           # 앱 단위 테스트 (트레이 아이콘, 자동 실행·단축키 등, 현재 24개)
 cargo fmt --all                  # 포맷
 cargo clippy --workspace --all-targets
 ```

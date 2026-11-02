@@ -7,7 +7,7 @@ use gpui_kit::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsIconic, SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW,
+    GetForegroundWindow, IsIconic, SetForegroundWindow, ShowWindow, SW_HIDE, SW_RESTORE, SW_SHOW,
 };
 
 /// Hides the window without destroying it, keeping GPUI's state intact.
@@ -46,5 +46,26 @@ fn hwnd(window: &Window) -> Option<HWND> {
     match handle.as_raw() {
         RawWindowHandle::Win32(handle) => Some(HWND(handle.hwnd.get() as *mut std::ffi::c_void)),
         _ => None,
+    }
+}
+
+/// Win32 handle of the window that currently holds keyboard focus.
+unsafe fn foreground_hwnd() -> Option<HWND> {
+    let hwnd = GetForegroundWindow();
+    if hwnd.is_invalid() {
+        None
+    } else {
+        Some(hwnd)
+    }
+}
+
+/// True when the app's own window is the foreground window.
+///
+/// Firing the hotkey while our window holds focus would capture our editor instead of
+/// another application's selection, so callers re-translate the current text directly.
+pub fn foreground_is_own(window: &Window) -> bool {
+    match (hwnd(window), unsafe { foreground_hwnd() }) {
+        (Some(ours), Some(current)) => ours == current,
+        _ => false,
     }
 }

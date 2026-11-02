@@ -13,13 +13,13 @@ use crate::root::{Root, Tab};
 use crate::widgets;
 
 impl gpui_kit::Render for Root {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_top_bar(cx))
-            .child(self.render_body(cx))
+            .child(self.render_body(window, cx))
             .child(self.render_status_bar(cx))
     }
 }
@@ -91,11 +91,11 @@ impl Root {
         }
     }
 
-    fn render_body(&mut self, cx: &mut Context<Self>) -> Div {
+    fn render_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let content: AnyElement = match self.tab {
             Tab::Translate => self.render_translate(cx).into_any_element(),
             Tab::Models => self.render_models(cx).into_any_element(),
-            Tab::Settings => self.render_settings(cx).into_any_element(),
+            Tab::Settings => self.render_settings(window, cx).into_any_element(),
         };
         div().flex().flex_col().flex_1().min_h_0().child(content)
     }

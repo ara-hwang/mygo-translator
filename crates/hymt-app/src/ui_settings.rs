@@ -9,19 +9,25 @@ use gpui_kit::component::theme::Theme;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Selectable};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, px, relative, rems, AnyElement, Context, Div, ScrollEvent, SharedString, Window,
+    div, px, relative, rems, AnyElement, Context, DispatchPhase, Div, KeyDownEvent, ScrollEvent,
+    SharedString, Window,
 };
 
 use hymt_core::{
     glossary,
-    settings::{Appearance, Settings},
+    settings::{AcquisitionMode, Appearance, Settings},
 };
 
+use crate::hotkey;
 use crate::root::{Root, ScrollSpot, PROMPT_LANGUAGES, STYLE_PRESETS};
 use crate::widgets;
 
 impl Root {
-    pub fn render_settings(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let prompt_radios: Vec<Radio> = PROMPT_LANGUAGES
             .iter()
             .enumerate()
@@ -120,6 +126,8 @@ impl Root {
                             ),
                     ),
             )
+            .child(widgets::section_label("단축키", cx))
+            .child(self.render_hotkey_section(window, cx))
             .child(widgets::section_label("화면", cx))
             .child(
                 widgets::card(cx)
@@ -364,6 +372,156 @@ impl Root {
             )
     }
 
+    /// Global-hotkey section: master switch, both trigger bindings and the selected-text
+    /// acquisition mode. While a binding is being recorded, every key press — captured on
+    /// the window during paint — feeds the recorder.
+    fn render_hotkey_section(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let recording = self.hotkey_recorder.as_ref().map(|recorder| recorder.slot);
+        if recording.is_some() {
+            let entity = cx.entity();
+            window.on_key_event::<KeyDownEvent>(move |event, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, |root, cx| root.record_hotkey_key(event, window, cx));
+                }
+            });
+        }
+
+        let chord_value = self
+            .settings
+            .hotkey
+            .combo
+            .as_ref()
+            .map(hotkey::format_combo)
+            .unwrap_or_else(|| "등록 안 됨".to_string());
+        let double_value = self
+            .settings
+            .hotkey
+            .double_tap
+            .as_ref()
+            .map(hotkey::format_double_tap)
+            .unwrap_or_else(|| "등록 안 됨".to_string());
+        let awaiting_second = matches!(&self.hotkey_recorder, Some(recorder) if recorder.slot == hotkey::RecorderSlot::DoubleTap && recorder.first.is_some());
+
+        let chord_button = if recording == Some(hotkey::RecorderSlot::Chord) {
+            Button::new("hotkey-chord")
+                .text()
+                .label("기록 중… (Esc로 취소)")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_hotkey_recorder(None, window, cx);
+                }))
+        } else {
+            Button::new("hotkey-chord")
+                .text()
+                .label(chord_value)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_hotkey_recorder(Some(hotkey::RecorderSlot::Chord), window, cx);
+                }))
+        };
+        let double_button = if awaiting_second {
+            Button::new("hotkey-double")
+                .text()
+                .label("한 번 더 눌러 주세요… (Esc로 취소)")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_hotkey_recorder(None, window, cx);
+                }))
+        } else if recording == Some(hotkey::RecorderSlot::DoubleTap) {
+            Button::new("hotkey-double")
+                .text()
+                .label("두 번 눌러 주세요…")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_hotkey_recorder(None, window, cx);
+                }))
+        } else {
+            Button::new("hotkey-double")
+                .text()
+                .label(double_value)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.set_hotkey_recorder(Some(hotkey::RecorderSlot::DoubleTap), window, cx);
+                }))
+        };
+
+        let acquisition = self.settings.hotkey.acquisition;
+        let acquisition_radios = vec![
+            Radio::new("hotkey-acq-auto")
+                .label("UI Automation 우선 (권장)")
+                .checked(acquisition == AcquisitionMode::Auto),
+            Radio::new("hotkey-acq-clipboard")
+                .label("Ctrl+C 클립보드만")
+                .checked(acquisition == AcquisitionMode::ClipboardOnly),
+        ];
+        let acquisition_index = match acquisition {
+            AcquisitionMode::Auto => 0,
+            AcquisitionMode::ClipboardOnly => 1,
+        };
+        let acquisition_description = match acquisition {
+            AcquisitionMode::Auto => {
+                "크롬·워드·터미널 등 대부분의 앱에서 선택 텍스트를 직접 읽고, 지원하지 않는 앱만 Ctrl+C로 잠시 복사합니다."
+            }
+            AcquisitionMode::ClipboardOnly => {
+                "항상 Ctrl+C를 대신 눌러 클립보드에서 읽습니다. 이전 클립보드 텍스트는 다시 채워 넣습니다."
+            }
+        };
+
+        let (status, status_error) = self.hotkey_status_text();
+        let status_line = if status_error {
+            div().text_xs().text_color(cx.theme().danger).child(status)
+        } else {
+            widgets::muted(status, cx)
+        };
+
+        widgets::card(cx)
+            .child(widgets::panel_header("이 창을 열지 않고 즉시 번역", None, cx))
+            .child(
+                v_flex()
+                    .gap_3()
+                    .p_3()
+                    .child(status_line)
+                    .child(
+                        Switch::new("hotkey-enabled")
+                            .label("전역 단축키 사용")
+                            .checked(self.settings.hotkey.enabled)
+                            .on_change(cx.listener(|this, checked: &bool, window, cx| {
+                                this.set_hotkey_enabled(*checked, window, cx);
+                            })),
+                    )
+                    .child(widgets::muted(
+                        "다른 앱에서 텍스트를 선택한 상태로 단축키를 누르면 HyMT 창이 열리면서 번역이 시작됩니다. 언어 쌍은 현재 선택된 값을 그대로 사용합니다.",
+                        cx,
+                    ))
+                    .child(widgets::setting_row("조합 단축키", chord_button))
+                    .child(widgets::muted(
+                        "한 번의 조합 입력으로 즉시 실행됩니다. 등록한 조합은 다른 앱에서 원래 하던 동작 대신 HyMT를 띄웁니다.",
+                        cx,
+                    ))
+                    .child(widgets::setting_row("두 번 누르기", double_button))
+                    .child(widgets::muted(
+                        "DeepL처럼 같은 키를 빠르게 두 번 누릅니다. 키 입력은 흡수하지 않으므로 일반 Ctrl+C 복사에는 영향이 없습니다.",
+                        cx,
+                    ))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(widgets::muted("선택 텍스트 획득 방식", cx))
+                            .child(
+                                RadioGroup::new("hotkey-acquisition")
+                                    .children(acquisition_radios)
+                                    .selected_index(Some(acquisition_index))
+                                    .on_change(cx.listener(
+                                        |this, index: &usize, window, cx| {
+                                            let mode = if *index == 0 {
+                                                AcquisitionMode::Auto
+                                            } else {
+                                                AcquisitionMode::ClipboardOnly
+                                            };
+                                            this.set_hotkey_acquisition(mode, window, cx);
+                                        },
+                                    )),
+                            )
+                            .child(widgets::muted(acquisition_description, cx)),
+                    ),
+            )
+    }
+
     fn base_url_button(
         &self,
         label: &'static str,
@@ -470,6 +628,7 @@ impl Root {
             .update(cx, |state, cx| state.clean(window, cx));
         self.settings.prompt.glossary.clear();
         let _ = self.save_settings();
+        self.sync_hotkey();
         self.notify("설정을 기본값으로 되돌렸습니다.", false, window, cx);
         cx.notify();
     }

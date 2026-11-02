@@ -92,6 +92,126 @@ pub struct DesktopSettings {
     pub start_with_windows: bool,
 }
 
+/// How the global hotkey reads the selected text of the focused application.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AcquisitionMode {
+    /// Read the UI Automation selection first and fall back to a synthetic
+    /// `Ctrl+C` when the focused element has no text selection.
+    #[default]
+    Auto,
+    /// Always synthesize `Ctrl+C` and read the clipboard.
+    ClipboardOnly,
+}
+
+/// One hotkey binding: a modifier set plus a single logical key.
+///
+/// Persisted as neutral text so the settings file stays portable; the app maps
+/// `key` onto a Windows virtual-key code when registering.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct HotkeyCombo {
+    /// `Ctrl` must be held.
+    pub ctrl: bool,
+    /// `Shift` must be held.
+    pub shift: bool,
+    /// `Alt` must be held.
+    pub alt: bool,
+    /// A Windows key must be held.
+    pub win: bool,
+    /// Single key name: `a`..`z`, `0`..`9`, `f1`..`f24`, `space`, `tab`, `enter`
+    /// or the punctuation character printed on the key (`-`, `=`, `,`, `.`, `/`,
+    /// `` ` ``, `;`, `'`, `[`, `\`, `]`).
+    pub key: String,
+}
+
+impl Default for HotkeyCombo {
+    fn default() -> Self {
+        Self {
+            ctrl: true,
+            shift: true,
+            alt: false,
+            win: false,
+            key: "c".to_string(),
+        }
+    }
+}
+
+/// The individual-named keys accepted for `HotkeyCombo::key`.
+const NAMED_HOTKEY_KEYS: &[(&str, char)] = &[("space", ' '), ("tab", '\t'), ("enter", '\r')];
+
+/// Lowercases and trims a stored key name.
+pub fn normalize_hotkey_key(key: &str) -> String {
+    key.trim().to_ascii_lowercase()
+}
+
+/// True when `key` is a persistable single-key name.
+pub fn is_supported_key(key: &str) -> bool {
+    if NAMED_HOTKEY_KEYS.iter().any(|(name, _)| *name == key) {
+        return true;
+    }
+    if let Ok(number) = key.strip_prefix('f').unwrap_or("").parse::<u32>() {
+        return (1..=24).contains(&number);
+    }
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(one), None) => {
+            one.is_ascii_alphanumeric()
+                || matches!(
+                    one,
+                    '-' | '=' | ',' | '.' | '/' | '`' | ';' | '\'' | '[' | '\\' | ']'
+                )
+        }
+        _ => false,
+    }
+}
+
+impl HotkeyCombo {
+    /// True when the binding can be registered: at least one modifier and a supported key.
+    pub fn is_valid(&self) -> bool {
+        (self.ctrl || self.shift || self.alt || self.win) && is_supported_key(&self.key)
+    }
+
+    /// True when at least one modifier is required.
+    pub fn has_modifier(&self) -> bool {
+        self.ctrl || self.shift || self.alt || self.win
+    }
+}
+
+/// Global hotkeys that translate the selected text of another application.
+///
+/// The master switch governs every binding; when disabled the app keeps the
+/// stored bindings so toggling back on restores them.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct HotkeySettings {
+    /// Master switch for the whole hotkey feature.
+    pub enabled: bool,
+    /// Modifier chord registered through `RegisterHotKey`. `None` = not configured.
+    pub combo: Option<HotkeyCombo>,
+    /// Modifier + key pressed twice in quick succession, DeepL style. `None` = not configured.
+    pub double_tap: Option<HotkeyCombo>,
+    /// How selected text is captured when a trigger fires.
+    pub acquisition: AcquisitionMode,
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            combo: Some(HotkeyCombo::default()),
+            double_tap: Some(HotkeyCombo {
+                ctrl: true,
+                shift: false,
+                alt: false,
+                win: false,
+                key: "c".to_string(),
+            }),
+            acquisition: AcquisitionMode::default(),
+        }
+    }
+}
+
 /// Smallest editor text size, in pixels.
 pub const TEXT_SIZE_MIN: u16 = 10;
 /// Largest editor text size, in pixels.
@@ -198,6 +318,8 @@ pub struct Settings {
     pub prompt: PromptSettings,
     /// Tray and Windows startup options.
     pub desktop: DesktopSettings,
+    /// Global hotkey triggers for selected text.
+    pub hotkey: HotkeySettings,
     /// Text size in pixels shared by the source and translation editors.
     #[serde(deserialize_with = "lenient_text_size")]
     pub text_size: u16,
@@ -214,6 +336,7 @@ impl Default for Settings {
             generation: GenerationSettings::default(),
             prompt: PromptSettings::default(),
             desktop: DesktopSettings::default(),
+            hotkey: HotkeySettings::default(),
             text_size: TEXT_SIZE_DEFAULT,
         }
     }
@@ -257,6 +380,23 @@ impl Settings {
         self.generation.max_tokens = self.generation.max_tokens.clamp(16, 8192);
 
         self.text_size = clamp_text_size(self.text_size);
+
+        // Hotkey bindings must stay registrable: normalize the key name and drop
+        // malformed combinations instead of trying to register them later.
+        if let Some(combo) = self.hotkey.combo.take() {
+            let combo = HotkeyCombo {
+                key: normalize_hotkey_key(&combo.key),
+                ..combo
+            };
+            self.hotkey.combo = combo.is_valid().then_some(combo);
+        }
+        if let Some(tap) = self.hotkey.double_tap.take() {
+            let tap = HotkeyCombo {
+                key: normalize_hotkey_key(&tap.key),
+                ..tap
+            };
+            self.hotkey.double_tap = tap.is_valid().then_some(tap);
+        }
 
         if self.prompt.style.chars().count() > 200 {
             self.prompt.style = self.prompt.style.chars().take(200).collect();
@@ -458,5 +598,96 @@ mod tests {
         settings.target_lang = "ko".into();
         let fixed = settings.sanitized();
         assert_ne!(fixed.source_lang, fixed.target_lang);
+    }
+
+    #[test]
+    fn hotkey_defaults_are_disabled_with_standard_bindings() {
+        let hotkey = Settings::default().hotkey;
+        assert!(!hotkey.enabled);
+        let chord = hotkey.combo.expect("default chord");
+        assert!(chord.ctrl && chord.shift && !chord.alt && !chord.win);
+        assert_eq!(chord.key, "c");
+        assert!(chord.is_valid());
+        let double_tap = hotkey.double_tap.expect("default double press");
+        assert!(double_tap.ctrl && !double_tap.shift);
+        assert_eq!(double_tap.key, "c");
+        assert_eq!(hotkey.acquisition, AcquisitionMode::Auto);
+    }
+
+    #[test]
+    fn hotkey_settings_persist_and_stay_enabled() {
+        let mut settings = Settings {
+            hotkey: HotkeySettings {
+                enabled: true,
+                acquisition: AcquisitionMode::ClipboardOnly,
+                ..HotkeySettings::default()
+            },
+            ..Settings::default()
+        };
+        settings.hotkey.combo = Some(HotkeyCombo {
+            ctrl: true,
+            shift: false,
+            alt: true,
+            win: false,
+            key: "f4".to_string(),
+        });
+
+        let dir = TempDir::new("settings-hotkey");
+        let path = dir.path().join("settings.json");
+        settings.save(&path).unwrap();
+        let (loaded, warning) = Settings::load_or_default(&path);
+        assert!(warning.is_none());
+        assert_eq!(loaded.hotkey, settings.hotkey);
+    }
+
+    #[test]
+    fn hotkey_sanitize_drops_unusable_bindings() {
+        let unusable_combo = HotkeyCombo {
+            ctrl: true,
+            shift: false,
+            key: "ctrl".to_string(),
+            ..HotkeyCombo::default()
+        };
+        let unusable_tap = HotkeyCombo {
+            ctrl: false,
+            shift: false,
+            key: "c".to_string(),
+            ..HotkeyCombo::default()
+        };
+
+        let settings = Settings {
+            hotkey: HotkeySettings {
+                enabled: true,
+                combo: Some(unusable_combo),
+                double_tap: Some(unusable_tap),
+                ..HotkeySettings::default()
+            },
+            ..Settings::default()
+        };
+        let fixed = settings.sanitized();
+        assert!(fixed.hotkey.combo.is_none());
+        assert!(fixed.hotkey.double_tap.is_none());
+        // The master switch itself is not invalidated; the app reports that no
+        // trigger is registered.
+        assert!(fixed.hotkey.enabled);
+    }
+
+    #[test]
+    fn hotkey_key_names_are_normalized() {
+        let mut combo = HotkeyCombo {
+            ctrl: true,
+            key: "  C ".to_string(),
+            ..HotkeyCombo::default()
+        };
+        combo.key = normalize_hotkey_key(&combo.key);
+        assert!(combo.is_valid());
+        assert!(is_supported_key("f12"));
+        assert!(is_supported_key("space"));
+        assert!(is_supported_key(","));
+        assert!(is_supported_key("`"));
+        assert!(!is_supported_key("ctrl"));
+        assert!(!is_supported_key("f25"));
+        assert!(!is_supported_key(""));
+        assert!(!is_supported_key("hello"));
     }
 }

@@ -24,7 +24,8 @@ use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::component::{h_flex, ActiveTheme, IndexPath, WindowExt};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    div, AnyWindowHandle, App, ClipboardItem, Context, Entity, ScrollEvent, SharedString, Window,
+    div, AnyWindowHandle, App, ClipboardItem, Context, Entity, KeyDownEvent, Keystroke,
+    ScrollEvent, SharedString, Window,
 };
 use hymt_core::{
     client::{self, Endpoint, GenerationParams, TranslationResult},
@@ -34,11 +35,11 @@ use hymt_core::{
     models::{self, DownloadProgress, ModelOption},
     paths::AppPaths,
     prompt::{self, PromptLanguage, PromptMode},
-    settings::{Appearance, Settings},
+    settings::{AcquisitionMode, Appearance, HotkeyCombo, Settings},
 };
 
 use crate::smooth_scroll::SmoothScroller;
-use crate::{autostart, tray, window_ops};
+use crate::{autostart, capture, hotkey, tray, window_ops};
 
 /// Top-level tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -243,6 +244,26 @@ enum TranslateEvent {
     Done(Result<TranslationResult, String>),
 }
 
+/// Completed selected-text capture from the hotkey path.
+struct CaptureEvent {
+    /// Generation of the request; results from superseded captures are dropped.
+    epoch: u64,
+    /// Captured text, or the user-facing error message.
+    result: Result<String, String>,
+}
+
+/// Recording session for one hotkey binding in the settings tab.
+pub struct HotkeyRecorder {
+    /// Which binding is being recorded.
+    pub slot: hotkey::RecorderSlot,
+    /// First press of the double-press pattern, with the time it happened.
+    pub first: Option<(HotkeyCombo, Instant)>,
+}
+
+/// Minimum delay between two accepted hotkey triggers, so `RegisterHotKey` auto-repeat
+/// (holding the chord) does not queue up capture after capture.
+const TRIGGER_DEBOUNCE: Duration = Duration::from_millis(400);
+
 /// The single entity that owns the whole window state.
 pub struct Root {
     /// Application directories.
@@ -300,6 +321,20 @@ pub struct Root {
     /// True once the notification overlay can receive messages.
     overlay_ready: bool,
     exe_dir: PathBuf,
+    /// Global hotkey thread, when it could be started.
+    pub hotkey: Option<hotkey::Hotkey>,
+    /// Last configuration pushed to the hotkey thread, for change detection.
+    hotkey_applied: hotkey::HotkeySpecs,
+    /// Latest registration failure, surfaced in the settings tab.
+    pub hotkey_error: Option<String>,
+    /// Receiver of the in-flight selected-text capture.
+    capture_rx: Option<Receiver<CaptureEvent>>,
+    /// Generation counter of issued capture jobs.
+    capture_epoch: u64,
+    /// When the last trigger fired, used to debounce auto-repeat.
+    last_trigger: Option<Instant>,
+    /// In-flight binding recording in the settings tab.
+    pub hotkey_recorder: Option<HotkeyRecorder>,
 }
 
 impl Root {
@@ -351,6 +386,15 @@ impl Root {
             .unwrap_or_else(|| paths.root().to_path_buf());
         let server_path =
             engine::discover_server(&exe_dir, settings.server.runtime_path.as_deref());
+
+        let hotkey_spec = hotkey::parse_specs(&settings.hotkey);
+        let (hotkey, hotkey_spawn_error) = match hotkey::Hotkey::start(hotkey_spec) {
+            Ok(hotkey) => (Some(hotkey), None),
+            Err(error) => (
+                None,
+                Some(format!("단축키 스레드를 시작할 수 없습니다: {error}")),
+            ),
+        };
 
         let source = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -468,6 +512,13 @@ impl Root {
             pending_notices: Vec::new(),
             overlay_ready: false,
             exe_dir,
+            hotkey,
+            hotkey_applied: hotkey_spec,
+            hotkey_error: None,
+            capture_rx: None,
+            capture_epoch: 0,
+            last_trigger: None,
+            hotkey_recorder: None,
         };
 
         if let Some(warning) = settings_warning {
@@ -482,6 +533,9 @@ impl Root {
             );
         }
         if let Some(error) = startup_error {
+            root.notify(error, true, window, cx);
+        }
+        if let Some(error) = hotkey_spawn_error {
             root.notify(error, true, window, cx);
         }
 
@@ -662,6 +716,69 @@ impl Root {
             }
         }
 
+        // Hotkey events. The busy guard keeps a held chord (auto-repeat) or a press
+        // during a running translation from queuing duplicate captures.
+        let mut hotkey_events = Vec::new();
+        if let Some(hotkey) = &self.hotkey {
+            while let Some(event) = hotkey.poll() {
+                hotkey_events.push(event);
+            }
+        }
+        for event in hotkey_events {
+            match event {
+                hotkey::HotkeyEvent::Registration(outcome) => {
+                    let failure = outcome.as_ref().err().cloned();
+                    if failure != self.hotkey_error {
+                        self.hotkey_error = failure;
+                        changed = true;
+                    }
+                }
+                hotkey::HotkeyEvent::Triggered { clipboard_seq } => {
+                    let throttled = self
+                        .last_trigger
+                        .is_some_and(|moment| moment.elapsed() < TRIGGER_DEBOUNCE);
+                    if throttled || self.capture_rx.is_some() {
+                        continue;
+                    }
+                    self.last_trigger = Some(Instant::now());
+                    // The streaming translation must be visible, whatever tab the user
+                    // left the window on.
+                    self.tab = Tab::Translate;
+                    if window_ops::foreground_is_own(window) {
+                        // Our own window holds focus; capturing "another app's selection"
+                        // would read our editor. Re-translate the current text instead.
+                        let text = self.source.read(cx).value().to_string();
+                        self.translate_source(text, true, window, cx);
+                        changed = true;
+                        continue;
+                    }
+                    let (sender, receiver) = mpsc::channel::<CaptureEvent>();
+                    self.capture_epoch += 1;
+                    let epoch = self.capture_epoch;
+                    let mode = self.settings.hotkey.acquisition;
+                    self.capture_rx = Some(receiver);
+                    thread::Builder::new()
+                        .name("hymt-capture".to_string())
+                        .spawn(move || {
+                            let result = capture::capture_selected(mode, clipboard_seq);
+                            let _ = sender.send(CaptureEvent { epoch, result });
+                        })
+                        .ok();
+                    changed = true;
+                }
+            }
+        }
+
+        // Finished captures: show the window, fill the editor, start translating.
+        if let Some(receiver) = self.capture_rx.take() {
+            let (event, keep) = drain_latest_capture(receiver, self.capture_epoch);
+            self.capture_rx = keep;
+            if let Some(event) = event {
+                self.on_capture_done(event.result, window, cx);
+                changed = true;
+            }
+        }
+
         // Engine events.
         let mut events = Vec::new();
         if let Some(supervisor) = &self.engine {
@@ -825,6 +942,248 @@ impl Root {
         changed
     }
 
+    /// One-line status of the hotkey feature shown in its settings card.
+    ///
+    /// The bool marks errors, which the UI paints in the danger color.
+    pub fn hotkey_status_text(&self) -> (String, bool) {
+        if let Some(error) = &self.hotkey_error {
+            return (error.clone(), true);
+        }
+        if !self.settings.hotkey.enabled {
+            return (
+                "전역 단축키 기능이 꺼져 있습니다. 위 스위치로 켤 수 있습니다.".to_string(),
+                false,
+            );
+        }
+        let mut triggers = Vec::new();
+        if let Some(combo) = &self.settings.hotkey.combo {
+            triggers.push(format!("조합 {}", hotkey::format_combo(combo)));
+        }
+        if let Some(tap) = &self.settings.hotkey.double_tap {
+            triggers.push(hotkey::format_double_tap(tap));
+        }
+        if triggers.is_empty() {
+            (
+                "등록된 트리거가 없습니다. 기록 버튼으로 등록하세요.".to_string(),
+                false,
+            )
+        } else {
+            (format!("등록됨: {}", triggers.join(" · ")), false)
+        }
+    }
+
+    /// Applies a finished hotkey capture: surface the window, load the text and start
+    /// the automatic translation.
+    fn on_capture_done(
+        &mut self,
+        result: Result<String, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window_ops::show(window);
+        // Bring the translation result into view, whatever tab the window had open.
+        self.tab = Tab::Translate;
+        match result {
+            Ok(text) => {
+                self.source
+                    .update(cx, |state, cx| state.set_value(text.clone(), window, cx));
+                self.translate_source(text, true, window, cx);
+            }
+            Err(message) => self.notify(message, true, window, cx),
+        }
+        cx.notify();
+    }
+
+    /// Pushes the current hotkey settings to the thread, deduplicating no-op writes.
+    pub(crate) fn sync_hotkey(&mut self) {
+        let specs = hotkey::parse_specs(&self.settings.hotkey);
+        if self.hotkey_applied == specs {
+            return;
+        }
+        self.hotkey_applied = specs;
+        if let Some(hotkey) = &self.hotkey {
+            hotkey.update(specs);
+        }
+    }
+
+    /// Turns the global-hotkey master switch on or off.
+    pub fn set_hotkey_enabled(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.hotkey.enabled = enabled;
+        let _ = self.save_settings();
+        self.sync_hotkey();
+        self.notify(
+            if enabled {
+                "전역 단축키를 켰습니다. 다른 앱에서 선택한 텍스트를 번역할 수 있습니다."
+            } else {
+                "전역 단축키를 껐습니다."
+            },
+            false,
+            window,
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Changes how the trigger reads the focused application's selection.
+    pub fn set_hotkey_acquisition(
+        &mut self,
+        mode: AcquisitionMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings.hotkey.acquisition == mode {
+            return;
+        }
+        self.settings.hotkey.acquisition = mode;
+        let _ = self.save_settings();
+        self.notify(
+            match mode {
+                AcquisitionMode::Auto => {
+                    "UI Automation을 먼저 읽고, 지원하지 않는 앱에서는 Ctrl+C로 대체합니다."
+                }
+                AcquisitionMode::ClipboardOnly => "항상 Ctrl+C로 복사한 뒤 클립보드에서 읽습니다.",
+            },
+            false,
+            window,
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Starts (or stops) recording a binding in the settings tab.
+    pub fn set_hotkey_recorder(
+        &mut self,
+        slot: Option<hotkey::RecorderSlot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match slot {
+            Some(slot) => {
+                self.hotkey_recorder = Some(HotkeyRecorder { slot, first: None });
+                self.notify("등록할 단축키 조합을 눌러 주세요.", false, window, cx);
+            }
+            None => {
+                if self.hotkey_recorder.is_some() {
+                    self.notify("단축키 기록을 취소했습니다.", false, window, cx);
+                }
+                self.hotkey_recorder = None;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Consumes one key press of a recording session.
+    ///
+    /// Chords commit on the first full combination; the double press commits when the
+    /// same modifier-key pair arrives twice within [`hotkey::DOUBLE_TAP_GAP_MS`].
+    pub fn record_hotkey_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = event.keystroke.key.clone();
+        if key == "escape" {
+            self.set_hotkey_recorder(None, window, cx);
+            return;
+        }
+        if matches!(key.as_str(), "control" | "alt" | "shift" | "meta") {
+            // Modifier-only keydown: wait for the actual key.
+            return;
+        }
+        let Some(combo) = combo_from_keystroke(&event.keystroke) else {
+            self.notify(
+                "지원하지 않는 키입니다. 문자·숫자·기호, F1–F24, Space·Tab·Enter 중에서 눌러 주세요.",
+                true,
+                window,
+                cx,
+            );
+            cx.notify();
+            return;
+        };
+        if !combo.has_modifier() {
+            self.notify(
+                "Ctrl·Shift·Alt·Win 중 하나를 함께 눌러 주세요.",
+                true,
+                window,
+                cx,
+            );
+            cx.notify();
+            return;
+        }
+        let Some(slot) = self.hotkey_recorder.as_ref().map(|recorder| recorder.slot) else {
+            return;
+        };
+        match slot {
+            hotkey::RecorderSlot::Chord => {
+                self.hotkey_recorder = None;
+                self.settings.hotkey.combo = Some(combo.clone());
+                let _ = self.save_settings();
+                self.sync_hotkey();
+                self.notify(
+                    format!(
+                        "조합 단축키를 등록했습니다: {}",
+                        hotkey::format_combo(&combo)
+                    ),
+                    false,
+                    window,
+                    cx,
+                );
+            }
+            hotkey::RecorderSlot::DoubleTap => {
+                let first = self
+                    .hotkey_recorder
+                    .as_mut()
+                    .and_then(|recorder| recorder.first.take());
+                match first {
+                    Some((first, at)) if first == combo => {
+                        let gap = at.elapsed().as_millis() as u64;
+                        if gap <= hotkey::DOUBLE_TAP_GAP_MS + hotkey::DOUBLE_TAP_RECORD_SLACK_MS {
+                            self.hotkey_recorder = None;
+                            self.settings.hotkey.double_tap = Some(combo.clone());
+                            let _ = self.save_settings();
+                            self.sync_hotkey();
+                            self.notify(
+                                format!(
+                                    "두 번 누르기 단축키를 등록했습니다: {}",
+                                    hotkey::format_double_tap(&combo)
+                                ),
+                                false,
+                                window,
+                                cx,
+                            );
+                        } else {
+                            self.restart_double_tap_recording(combo);
+                            self.notify(
+                                "간격이 너무 늦었습니다. 다시 두 번 눌러 주세요.",
+                                true,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    _ => {
+                        self.restart_double_tap_recording(combo);
+                        self.notify("같은 키를 한 번 더 눌러 주세요.", false, window, cx);
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Stores the first press of a double-press recording attempt.
+    fn restart_double_tap_recording(&mut self, combo: HotkeyCombo) {
+        if let Some(recorder) = self.hotkey_recorder.as_mut() {
+            recorder.first = Some((combo, Instant::now()));
+        }
+    }
+
     /// Mirrors the translation text into the read-only output editor.
     fn sync_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.output.clone();
@@ -917,16 +1276,39 @@ impl Root {
         prompt::build_prompt(mode, source, target, self.settings.prompt.language)
     }
 
-    /// Starts a streaming translation of the current input.
+    /// Starts a streaming translation of the current input (manual path).
     pub fn translate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.translating {
+        let source = self.source.read(cx).value().to_string();
+        self.translate_source(source, false, window, cx);
+    }
+
+    /// Starts a streaming translation of `source`.
+    ///
+    /// `force` replaces an already-running translation instead of ignoring the call, which
+    /// is what the hotkey path wants on repeated triggers. The manual button keeps the
+    /// forgiving behavior.
+    pub fn translate_source(
+        &mut self,
+        source: String,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.translating && !force {
             return;
         }
-        let source = self.source.read(cx).value().to_string();
         if let Err(message) = prompt::validate_source(&source) {
             self.notify(message, true, window, cx);
             cx.notify();
             return;
+        }
+        if self.translating {
+            // Replace the in-flight job: cancel its worker and drop its events.
+            if let Some(cancel) = self.cancel.take() {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            self.translate_rx = None;
+            self.translating = false;
         }
         if !self.engine_state.is_ready() {
             let message = match &self.engine_state {
@@ -1430,4 +1812,48 @@ fn curl_program() -> &'static str {
     } else {
         "curl"
     }
+}
+
+/// Drains finished capture events, keeping still-running channels subscribed and dropping
+/// the results of superseded captures.
+fn drain_latest_capture(
+    receiver: Receiver<CaptureEvent>,
+    epoch: u64,
+) -> (Option<CaptureEvent>, Option<Receiver<CaptureEvent>>) {
+    let mut result = None;
+    let mut keep = None;
+    loop {
+        match receiver.try_recv() {
+            Ok(event) => {
+                if event.epoch == epoch {
+                    result = Some(event);
+                    break;
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                keep = Some(receiver);
+                break;
+            }
+            Err(TryRecvError::Disconnected) => break,
+        }
+    }
+    (result, keep)
+}
+
+/// Builds a persisted binding out of a recorded key press.
+///
+/// Keys gpui presents with names outside of our supported set (arrows, page keys, …) never
+/// resolve, so the recorder can tell the user to pick a supported key.
+fn combo_from_keystroke(keystroke: &Keystroke) -> Option<HotkeyCombo> {
+    let key = hymt_core::settings::normalize_hotkey_key(&keystroke.key);
+    if !hymt_core::settings::is_supported_key(&key) {
+        return None;
+    }
+    Some(HotkeyCombo {
+        ctrl: keystroke.modifiers.control,
+        shift: keystroke.modifiers.shift,
+        alt: keystroke.modifiers.alt,
+        win: keystroke.modifiers.platform,
+        key,
+    })
 }
