@@ -19,7 +19,7 @@ impl Root {
 
         let mut prompt_chips = Vec::new();
         for (label, language) in PROMPT_LANGUAGES.iter().copied() {
-            prompt_chips.push(self.prompt_option(label, *language, cx));
+            prompt_chips.push(self.prompt_option(label, language, cx));
         }
 
         let (pairs, warnings) = glossary::parse_report(&self.settings.prompt.glossary);

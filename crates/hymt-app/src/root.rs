@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use gpui::{Context, Entity, SharedString};
+use gpui::{AppContext, Context, Entity, SharedString};
 use hymt_core::{
     client::{self, Endpoint, GenerationParams, TranslationResult},
     engine::{self, EngineEvent, EngineState, LaunchConfig, Supervisor},

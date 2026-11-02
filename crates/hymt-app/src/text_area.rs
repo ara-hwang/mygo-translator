@@ -34,6 +34,7 @@ const PADDING: f32 = 14.0;
 const MIN_WIDTH: f32 = 40.0;
 
 /// One visual (wrapped) line of shaped text.
+#[derive(Clone)]
 struct VisualLine {
     /// Byte range inside the full content.
     range: Range<usize>,
@@ -872,21 +873,20 @@ fn build_layout(
             len: slice_text.len(),
             ..base_run.clone()
         }];
-        let slices =
-            match window
-                .text_system()
-                .shape_line(slice_text.clone(), font_size, &probe_runs, None)
-            {
-                Ok(probe) if width > MIN_WIDTH => {
-                    let probe_len = slice_text.len();
-                    let measure = |offset: usize| {
-                        let local = offset.min(probe_len);
-                        f32::from(probe.x_for_index(local))
-                    };
-                    wrap::wrap_line(&slice_text, range.start, width, measure)
-                }
-                _ => vec![range.clone()],
+        let slices = if width > MIN_WIDTH {
+            let probe =
+                window
+                    .text_system()
+                    .shape_line(slice_text.clone(), font_size, &probe_runs, None);
+            let probe_len = slice_text.len();
+            let measure = |offset: usize| {
+                let local = offset.min(probe_len);
+                f32::from(probe.x_for_index(local))
             };
+            wrap::wrap_line(&slice_text, range.start, width, measure)
+        } else {
+            vec![range.clone()]
+        };
 
         for slice in slices {
             let line_text: SharedString = text[slice.clone()].to_string().into();
@@ -895,32 +895,28 @@ fn build_layout(
                 slice.start,
                 slice.end,
                 selection,
-                selection_color,
-                text_color,
+                selection_color.into(),
+                text_color.into(),
             );
-            if let Ok(shaped) = window
+            let shaped = window
                 .text_system()
-                .shape_line(line_text, font_size, &runs, None)
-            {
-                lines.push(VisualLine {
-                    range: slice,
-                    shaped,
-                });
-            }
+                .shape_line(line_text, font_size, &runs, None);
+            lines.push(VisualLine {
+                range: slice,
+                shaped,
+            });
         }
     }
 
     if lines.is_empty() {
         let runs = vec![base_run.clone()];
-        if let Ok(shaped) = window
+        let shaped = window
             .text_system()
-            .shape_line("".into(), font_size, &runs, None)
-        {
-            lines.push(VisualLine {
-                range: 0..0,
-                shaped,
-            });
-        }
+            .shape_line("".into(), font_size, &runs, None);
+        lines.push(VisualLine {
+            range: 0..0,
+            shaped,
+        });
     }
 
     let line_height_f32 = f32::from(line_height);

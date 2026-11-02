@@ -14,7 +14,7 @@ mod ui_translate;
 mod widgets;
 mod wrap;
 
-use gpui::{px, size, App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use gpui::{px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
 
 fn main() {
     Application::new().run(|cx: &mut App| {
