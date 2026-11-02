@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use crate::client::{self, Endpoint};
 use crate::http::{cancel_token, CancelToken, HttpError};
+use crate::job::JobGuard;
 
 /// Executable name of llama.cpp's server, per platform.
 pub const SERVER_BINARY: &str = if cfg!(windows) {
@@ -144,6 +145,27 @@ enum Command_ {
     Shutdown,
 }
 
+/// A child process together with its job object, so the kernel kills the process when
+/// this process dies without a chance to run [`stop_child`] (a crash or an abort).
+struct ManagedChild {
+    child: Child,
+    _job: JobGuard,
+}
+
+impl std::ops::Deref for ManagedChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for ManagedChild {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.child
+    }
+}
+
 /// Owns the supervisor thread and the llama-server child process.
 pub struct Supervisor {
     commands: Sender<Command_>,
@@ -203,7 +225,7 @@ fn run(
     log_path: PathBuf,
     tail: Arc<Mutex<VecDeque<String>>>,
 ) {
-    let mut child: Option<Child> = None;
+    let mut child: Option<ManagedChild> = None;
     let mut pending: Option<(LaunchConfig, Instant)> = None;
     let cancel = cancel_token();
     let _ = events.send(EngineEvent::State(EngineState::Stopped));
@@ -320,7 +342,7 @@ fn run(
     }
 }
 
-fn stop_child(child: &mut Option<Child>, pending: &mut Option<(LaunchConfig, Instant)>) {
+fn stop_child(child: &mut Option<ManagedChild>, pending: &mut Option<(LaunchConfig, Instant)>) {
     *pending = None;
     if let Some(mut process) = child.take() {
         let _ = process.kill();
@@ -333,7 +355,7 @@ fn spawn_child(
     log_path: &Path,
     events: &Sender<EngineEvent>,
     tail: &Arc<Mutex<VecDeque<String>>>,
-) -> io::Result<Child> {
+) -> io::Result<ManagedChild> {
     let mut command = Command::new(&config.server_path);
     command
         .args(config.args())
@@ -350,13 +372,25 @@ fn spawn_child(
     }
 
     let mut child = command.spawn()?;
+    let job = match JobGuard::assign(&child) {
+        Ok(job) => job,
+        Err(err) => {
+            // Unusual host (for example a job that forbids nesting). Run without the
+            // kernel-side cleanup rather than refusing to start at all.
+            append_log(
+                log_path,
+                &format!("[warn] llama-server를 작업 개체에 넣지 못했습니다: {err}"),
+            );
+            JobGuard::detached()
+        }
+    };
     if let Some(stdout) = child.stdout.take() {
         pump(stdout, log_path.to_path_buf(), events.clone(), tail.clone());
     }
     if let Some(stderr) = child.stderr.take() {
         pump(stderr, log_path.to_path_buf(), events.clone(), tail.clone());
     }
-    Ok(child)
+    Ok(ManagedChild { child, _job: job })
 }
 
 fn pump<R>(

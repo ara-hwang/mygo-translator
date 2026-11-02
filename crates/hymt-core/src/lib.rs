@@ -10,6 +10,7 @@ pub mod client;
 pub mod engine;
 pub mod glossary;
 pub mod http;
+mod job;
 pub mod lang;
 pub mod models;
 pub mod paths;
