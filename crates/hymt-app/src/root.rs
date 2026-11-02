@@ -20,6 +20,7 @@ use gpui_kit::component::combobox::{ComboboxEvent, ComboboxState};
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
+use gpui_kit::component::select::{SelectEvent, SelectState};
 use gpui_kit::component::{h_flex, ActiveTheme, IndexPath, WindowExt};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -33,7 +34,7 @@ use hymt_core::{
     models::{self, DownloadProgress, ModelOption},
     paths::AppPaths,
     prompt::{self, PromptLanguage, PromptMode},
-    settings::Settings,
+    settings::{Appearance, Settings},
 };
 
 use crate::smooth_scroll::SmoothScroller;
@@ -75,6 +76,34 @@ pub const PROMPT_LANGUAGES: &[(&str, PromptLanguage)] = &[
     ("영어 지시문", PromptLanguage::English),
     ("중국어 지시문", PromptLanguage::Chinese),
 ];
+
+/// Theme choices shown in the settings select.
+pub const THEME_MODES: &[(&str, Appearance)] = &[
+    ("시스템", Appearance::System),
+    ("라이트", Appearance::Light),
+    ("다크", Appearance::Dark),
+];
+
+/// One entry of the theme select.
+#[derive(Clone)]
+pub struct ThemeItem {
+    /// Korean label shown in the dropdown.
+    pub label: &'static str,
+    /// Persisted appearance value.
+    pub appearance: Appearance,
+}
+
+impl SearchableListItem for ThemeItem {
+    type Value = Appearance;
+
+    fn title(&self) -> SharedString {
+        self.label.into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.appearance
+    }
+}
 
 /// One entry of the searchable language list.
 #[derive(Clone)]
@@ -121,6 +150,33 @@ impl SearchableListItem for LanguageItem {
                     .child(format!("{} · {}", self.code, self.language.name_en)),
             )
     }
+}
+
+/// Builds the theme select with the given appearance preselected.
+fn build_theme_select(
+    appearance: Appearance,
+    window: &mut Window,
+    cx: &mut Context<Root>,
+) -> Entity<SelectState<SearchableVec<ThemeItem>>> {
+    let items = THEME_MODES
+        .iter()
+        .map(|(label, appearance)| ThemeItem {
+            label,
+            appearance: *appearance,
+        })
+        .collect::<Vec<_>>();
+    let index = items
+        .iter()
+        .position(|item| item.appearance == appearance)
+        .unwrap_or(0);
+    cx.new(|cx| {
+        SelectState::new(
+            SearchableVec::new(items),
+            Some(IndexPath::default().row(index)),
+            window,
+            cx,
+        )
+    })
 }
 
 /// Every language, with the common pair pinned to the top.
@@ -205,6 +261,8 @@ pub struct Root {
     pub source_combo: Entity<ComboboxState<SearchableVec<LanguageItem>>>,
     /// Target-language picker.
     pub target_combo: Entity<ComboboxState<SearchableVec<LanguageItem>>>,
+    /// Theme picker in settings.
+    pub theme_select: Entity<SelectState<SearchableVec<ThemeItem>>>,
     /// Translated text.
     pub output: String,
     /// True when the last translation failed.
@@ -312,6 +370,7 @@ impl Root {
 
         let source_combo = Self::build_language_combo(&settings.source_lang, window, cx);
         let target_combo = Self::build_language_combo(&settings.target_lang, window, cx);
+        let theme_select = build_theme_select(settings.appearance, window, cx);
 
         if !settings.prompt.glossary.is_empty() {
             let glossary = settings.prompt.glossary.clone();
@@ -358,6 +417,26 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &theme_select,
+            window,
+            |this, _, event: &SelectEvent<SearchableVec<ThemeItem>>, _, cx| {
+                if let SelectEvent::Confirm(Some(appearance)) = event {
+                    this.set_appearance(*appearance, cx);
+                }
+            },
+        )
+        .detach();
+
+        // Follow the Windows appearance while the theme is set to System.
+        window
+            .observe_window_appearance({
+                let root = cx.entity();
+                move |_, cx| {
+                    root.update(cx, |root, cx| root.on_system_appearance_changed(cx));
+                }
+            })
+            .detach();
 
         let mut root = Self {
             paths,
@@ -368,6 +447,7 @@ impl Root {
             glossary_editor,
             source_combo,
             target_combo,
+            theme_select,
             output: String::new(),
             output_is_error: false,
             translating: false,

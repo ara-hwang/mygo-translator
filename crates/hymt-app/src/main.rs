@@ -24,6 +24,16 @@ use gpui_kit::{
 };
 use std::io::Write;
 
+/// Maps the persisted appearance choice onto GPUI Kit's theme mode.
+/// `System` resolves to the current Windows appearance.
+fn theme_mode(appearance: hymt_core::settings::Appearance, cx: &App) -> ThemeMode {
+    match appearance {
+        hymt_core::settings::Appearance::System => ThemeMode::from(cx.window_appearance()),
+        hymt_core::settings::Appearance::Light => ThemeMode::Light,
+        hymt_core::settings::Appearance::Dark => ThemeMode::Dark,
+    }
+}
+
 /// Panics inside the GPUI message loop never reach the console in a packaged or
 /// background run: gpui turns them into a bare `abort()` in debug builds. Record every
 /// panic, with a backtrace, in the app log so a crash can always be diagnosed.
@@ -70,6 +80,7 @@ fn main() {
         .skip(1)
         .any(|arg| arg == std::ffi::OsStr::new("--autostart"));
     let start_hidden = autostart_launch && settings.desktop.keep_in_tray;
+    let appearance = settings.appearance;
 
     gpui_kit::application()
         // Embed the full Lucide catalog (~0.7 MB) so icon-only action buttons can
@@ -77,7 +88,7 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
-            Theme::change(ThemeMode::Dark, None, cx);
+            Theme::change(theme_mode(appearance, cx), None, cx);
 
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {

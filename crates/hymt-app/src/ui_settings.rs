@@ -3,12 +3,19 @@
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Textarea;
 use gpui_kit::component::radio::{Radio, RadioGroup};
+use gpui_kit::component::select::Select;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{h_flex, v_flex, Selectable};
+use gpui_kit::component::theme::Theme;
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme, Selectable};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, px, relative, AnyElement, Context, Div, ScrollEvent, SharedString, Window};
+use gpui_kit::{
+    div, px, relative, rems, AnyElement, Context, Div, ScrollEvent, SharedString, Window,
+};
 
-use hymt_core::{glossary, settings::Settings};
+use hymt_core::{
+    glossary,
+    settings::{Appearance, Settings},
+};
 
 use crate::root::{Root, ScrollSpot, PROMPT_LANGUAGES, STYLE_PRESETS};
 use crate::widgets;
@@ -111,6 +118,21 @@ impl Root {
                                         cx,
                                     )),
                             ),
+                    ),
+            )
+            .child(widgets::section_label("화면", cx))
+            .child(
+                widgets::card(cx)
+                    .child(widgets::panel_header("테마", None, cx))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .p_3()
+                            .child(widgets::muted(
+                                "시스템은 Windows 설정의 모드를 따릅니다.",
+                                cx,
+                            ))
+                            .child(Select::new(&self.theme_select).menu_max_h(rems(12.0))),
                     ),
             )
             .child(widgets::section_label("생성 파라미터", cx))
@@ -359,6 +381,30 @@ impl Root {
             }))
     }
 
+    pub fn set_appearance(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
+        self.settings.appearance = appearance;
+        self.apply_appearance_setting(cx);
+    }
+
+    /// Applies the persisted appearance choice to every window and persists it.
+    fn apply_appearance_setting(&mut self, cx: &mut Context<Self>) {
+        Theme::change(crate::theme_mode(self.settings.appearance, cx), None, cx);
+        self.auto_save(cx);
+    }
+
+    /// Re-applies the theme when Windows switches appearance while on `System`.
+    pub fn on_system_appearance_changed(&mut self, cx: &mut Context<Self>) {
+        if self.settings.appearance != Appearance::System {
+            return;
+        }
+        // The observer also fires once when the window first opens; skip the
+        // redundant work when the current mode already matches.
+        let mode = crate::theme_mode(self.settings.appearance, cx);
+        if cx.theme().mode != mode {
+            self.apply_appearance_setting(cx);
+        }
+    }
+
     fn auto_save(&mut self, cx: &mut Context<Self>) {
         self.settings = self.settings.clone().sanitized();
         let _ = self.save_settings();
@@ -403,6 +449,11 @@ impl Root {
         self.settings = Settings::default();
         self.settings.server.model_path = model;
         self.settings.download_base = base;
+        let appearance = self.settings.appearance;
+        self.theme_select.update(cx, |state, cx| {
+            state.set_selected_value(&appearance, window, cx);
+        });
+        Theme::change(crate::theme_mode(self.settings.appearance, cx), None, cx);
         self.tray = None;
         if had_autostart {
             if let Err(err) = crate::autostart::set_enabled(false) {

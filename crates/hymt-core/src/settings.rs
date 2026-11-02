@@ -92,6 +92,17 @@ pub struct DesktopSettings {
     pub start_with_windows: bool,
 }
 
+/// UI color theme.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    /// Follow the Windows system appearance.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// How prompts are built.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -130,6 +141,8 @@ pub struct Settings {
     pub target_lang: String,
     /// Base URL used to download GGUF files (Hugging Face or a mirror).
     pub download_base: String,
+    /// UI theme (light or dark).
+    pub appearance: Appearance,
     /// Engine location and launch options.
     pub server: ServerSettings,
     /// Sampling options.
@@ -146,6 +159,7 @@ impl Default for Settings {
             source_lang: default_source().code.to_string(),
             target_lang: default_target().code.to_string(),
             download_base: "https://huggingface.co".to_string(),
+            appearance: Appearance::default(),
             server: ServerSettings::default(),
             generation: GenerationSettings::default(),
             prompt: PromptSettings::default(),
@@ -261,6 +275,7 @@ mod tests {
         assert_eq!(settings.generation.repeat_penalty, 1.05);
         assert_eq!(settings.generation.max_tokens, 4096);
         assert!(settings.server.port > 1024);
+        assert_eq!(settings.appearance, Appearance::System);
         assert!(!settings.desktop.keep_in_tray);
         assert!(!settings.desktop.start_with_windows);
     }
@@ -273,6 +288,7 @@ mod tests {
         settings.target_lang = "ja".into();
         settings.server.ctx_size = 8192;
         settings.prompt.glossary = "GPUI=>지피유아이".into();
+        settings.appearance = Appearance::Light;
         settings.desktop.keep_in_tray = true;
         settings.desktop.start_with_windows = true;
         settings.save(&path).unwrap();
@@ -326,6 +342,7 @@ mod tests {
     fn older_settings_files_get_desktop_defaults() {
         let settings: Settings =
             serde_json::from_str(r#"{"source_lang":"ko","target_lang":"en"}"#).unwrap();
+        assert_eq!(settings.appearance, Appearance::System);
         assert_eq!(settings.desktop, DesktopSettings::default());
     }
 
