@@ -8,7 +8,7 @@ use gpui_kit::component::progress::Progress;
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, px, Context, Div, FontWeight};
+use gpui_kit::{div, px, Context, Div, FontWeight, SharedString};
 
 use hymt_core::models::{self, ModelOption};
 
@@ -147,7 +147,9 @@ impl Root {
         } else if selected {
             Tag::success().child("사용 중").into_any_element()
         } else if installed {
-            Button::new("use-model")
+            // ElementIds must be unique across the whole frame: the catalog renders one
+            // row per model, so the button id has to carry the model's id.
+            Button::new(SharedString::from(format!("use-model-{}", option.id)))
                 .secondary()
                 .label("사용")
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -155,7 +157,7 @@ impl Root {
                 }))
                 .into_any_element()
         } else {
-            Button::new("download-model")
+            Button::new(SharedString::from(format!("download-model-{}", option.id)))
                 .primary()
                 .label("내려받기")
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -220,7 +222,8 @@ impl Root {
         let control = if selected {
             Tag::success().child("사용 중").into_any_element()
         } else {
-            Button::new("use-local-model")
+            // One row per installed model: the id has to stay unique across the frame.
+            Button::new(SharedString::from(format!("use-local-model-{}", name)))
                 .secondary()
                 .label("사용")
                 .on_click(cx.listener(move |this, _, window, cx| {

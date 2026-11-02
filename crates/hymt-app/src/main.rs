@@ -11,9 +11,32 @@ mod ui_translate;
 mod widgets;
 
 use gpui_kit::component::theme::{Theme, ThemeMode};
-use gpui_kit::{px, size, App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use gpui_kit::{
+    px, size, App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions,
+};
+use std::io::Write;
+
+/// Panics inside the GPUI message loop never reach the console in a packaged or
+/// background run: gpui turns them into a bare `abort()` in debug builds. Record every
+/// panic, with a backtrace, in the app log so a crash can always be diagnosed.
+fn install_panic_logger() {
+    let log_path = hymt_core::paths::AppPaths::detect().app_log();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            let _ = writeln!(file, "[panic] {info}");
+            let _ = writeln!(file, "{}", std::backtrace::Backtrace::force_capture());
+        }
+        default_hook(info);
+    }));
+}
 
 fn main() {
+    install_panic_logger();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(|cx: &mut App| {
