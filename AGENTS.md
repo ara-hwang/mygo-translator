@@ -8,7 +8,7 @@ Windows 11용 오프라인 번역기 HyMT 저장소. 제품 소개·사용법은
 cargo build                      # 개발 빌드
 cargo run --release              # 앱 실행 (GPUI DirectX 셰이더 컴파일로 fxc.exe 필요, 아래 참고)
 cargo test -p hymt-core          # 코어 테스트 전부 여기 (현재 65개)
-cargo test -p hymt-app           # 앱 단위 테스트 (트레이 아이콘, 자동 실행 경로 등, 현재 7개)
+cargo test -p hymt-app           # 앱 단위 테스트 (트레이 아이콘, 자동 실행 경로 등, 현재 11개)
 cargo fmt --all                  # 포맷
 cargo clippy --workspace --all-targets
 ```
@@ -29,6 +29,7 @@ Cargo workspace, 크레이트 2개:
   - `settings.rs` — 설정 검증·원자적 저장. `paths.rs` — 설치/포터블(`portable.txt`) 경로 해석. 하드코딩 경로 금지, 둘을 경유.
   - `models.rs` — Tencent 공식 GGUF 카탈로그·다운로드
 - `crates/hymt-app` — GPUI UI 바이너리(`hymt`). `gpui-kit` 컴포넌트 사용. 화면은 표시와 이벤트만 담당하고 판단 로직은 코어에 둔다.
+  - `build.rs` — exe에 Windows 리소스(앱 아이콘·버전 정보) 임베드. GPUI는 창 클래스 아이콘으로 exe의 리소스 ID 1(`assets/hymt.ico`)을 로드한다.
   - `root.rs` — 앱 상태·엔진 감독·스트리밍·다운로드·트레이/자동 실행 처리. `ui_*.rs`, `widgets.rs`, `smooth_scroll.rs` — 화면 표시와 이벤트.
   - `tray.rs` — 알림 영역 아이콘과 메뉴. `window_ops.rs` — Win32 창 숨김·복원. `autostart.rs` — HKCU Run 키 등록·해제. Windows 종속 코드는 이 크레이트에만 둔다.
   - `--autostart` 인자로 시작하면 트레이 옵션에 따라 창을 숨기고 시작한다.
