@@ -43,9 +43,9 @@ impl Root {
             .flex_wrap()
             .child(
                 // The combobox fills its parent (size_full), so the width belongs here.
-                div().w(px(220.0)).child(
-                    Combobox::new(&self.source_combo).menu_max_h(rems(16.0)),
-                ),
+                div()
+                    .w(px(220.0))
+                    .child(Combobox::new(&self.source_combo).menu_max_h(rems(16.0))),
             )
             .child(
                 Button::new("swap-langs")
@@ -57,9 +57,9 @@ impl Root {
                     })),
             )
             .child(
-                div().w(px(220.0)).child(
-                    Combobox::new(&self.target_combo).menu_max_h(rems(16.0)),
-                ),
+                div()
+                    .w(px(220.0))
+                    .child(Combobox::new(&self.target_combo).menu_max_h(rems(16.0))),
             )
             .child(div().flex_1())
             .child(self.glossary_button(cx))
@@ -119,7 +119,11 @@ impl Root {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(widgets::panel_header("원문", Some(actions.into_any_element()), cx))
+            .child(widgets::panel_header(
+                "원문",
+                Some(actions.into_any_element()),
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -156,13 +160,17 @@ impl Root {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(widgets::panel_header("번역", Some(actions.into_any_element()), cx))
+            .child(widgets::panel_header(
+                "번역",
+                Some(actions.into_any_element()),
+                cx,
+            ))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(Textarea::new(&self.output_state).h(relative(1.0)).readonly(true)),
+                div().flex_1().min_h_0().min_w_0().child(
+                    Textarea::new(&self.output_state)
+                        .h(relative(1.0))
+                        .readonly(true),
+                ),
             )
     }
 

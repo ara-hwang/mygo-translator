@@ -41,12 +41,7 @@ impl Root {
             .border_b_1()
             .border_color(cx.theme().title_bar_border)
             .bg(cx.theme().title_bar)
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::BOLD)
-                    .child("HyMT"),
-            )
+            .child(div().text_lg().font_weight(FontWeight::BOLD).child("HyMT"))
             .child(
                 TabBar::new("tabs")
                     .segmented()

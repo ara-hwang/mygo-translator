@@ -22,7 +22,7 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::{h_flex, ActiveTheme, IndexPath, WindowExt};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, App, AnyWindowHandle, ClipboardItem, Context, Entity, SharedString, Window};
+use gpui_kit::{div, AnyWindowHandle, App, ClipboardItem, Context, Entity, SharedString, Window};
 use hymt_core::{
     client::{self, Endpoint, GenerationParams, TranslationResult},
     engine::{self, EngineEvent, EngineState, LaunchConfig, Supervisor},
@@ -367,10 +367,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Entity<ComboboxState<SearchableVec<LanguageItem>>> {
         let items = language_items();
-        let index = items
-            .iter()
-            .position(|item| item.code == code)
-            .unwrap_or(0);
+        let index = items.iter().position(|item| item.code == code).unwrap_or(0);
         cx.new(|cx| {
             ComboboxState::new(
                 SearchableVec::new(items),
@@ -664,10 +661,12 @@ impl Root {
     fn sync_language_combos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let source = self.settings.source_lang.clone();
         let target = self.settings.target_lang.clone();
-        self.source_combo
-            .update(cx, |combo, cx| combo.set_selected_values(&[source], window, cx));
-        self.target_combo
-            .update(cx, |combo, cx| combo.set_selected_values(&[target], window, cx));
+        self.source_combo.update(cx, |combo, cx| {
+            combo.set_selected_values(&[source], window, cx)
+        });
+        self.target_combo.update(cx, |combo, cx| {
+            combo.set_selected_values(&[target], window, cx)
+        });
     }
 
     /// Looks up the selected target language.
@@ -817,7 +816,12 @@ impl Root {
         self.settings.prompt.glossary = self.glossary_editor.read(cx).value().to_string();
         match self.save_settings() {
             Ok(()) => self.notify("설정을 저장했습니다.", false, window, cx),
-            Err(err) => self.notify(format!("설정을 저장할 수 없습니다: {err}"), true, window, cx),
+            Err(err) => self.notify(
+                format!("설정을 저장할 수 없습니다: {err}"),
+                true,
+                window,
+                cx,
+            ),
         }
         cx.notify();
     }
@@ -938,12 +942,7 @@ impl Root {
     }
 
     /// Picks a locally installed model.
-    pub fn select_model(
-        &mut self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn select_model(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.settings.server.model_path = Some(path);
         let _ = self.save_settings();
         self.restart_engine(window, cx);

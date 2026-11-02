@@ -536,9 +536,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\n",
-                )
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\n")
                 .unwrap();
             for _ in 0..12 {
                 std::thread::sleep(Duration::from_millis(10));

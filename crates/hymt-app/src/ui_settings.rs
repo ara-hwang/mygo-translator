@@ -19,11 +19,9 @@ impl Root {
             .iter()
             .enumerate()
             .map(|(index, (label, _))| {
-                Radio::new(SharedString::from(format!(
-                    "prompt-language-{index}"
-                )))
-                .label(*label)
-                .checked(self.settings.prompt.language == PROMPT_LANGUAGES[index].1)
+                Radio::new(SharedString::from(format!("prompt-language-{index}")))
+                    .label(*label)
+                    .checked(self.settings.prompt.language == PROMPT_LANGUAGES[index].1)
             })
             .collect();
 
@@ -87,11 +85,19 @@ impl Root {
                             .p_3()
                             .child(widgets::setting_row(
                                 "temperature",
-                                stepper("temperature", format!("{:.2}", self.settings.generation.temperature), cx),
+                                stepper(
+                                    "temperature",
+                                    format!("{:.2}", self.settings.generation.temperature),
+                                    cx,
+                                ),
                             ))
                             .child(widgets::setting_row(
                                 "top_p",
-                                stepper("top-p", format!("{:.2}", self.settings.generation.top_p), cx),
+                                stepper(
+                                    "top-p",
+                                    format!("{:.2}", self.settings.generation.top_p),
+                                    cx,
+                                ),
                             ))
                             .child(widgets::setting_row(
                                 "top_k",
@@ -107,7 +113,11 @@ impl Root {
                             ))
                             .child(widgets::setting_row(
                                 "max_tokens",
-                                stepper("max-tokens", format!("{}", self.settings.generation.max_tokens), cx),
+                                stepper(
+                                    "max-tokens",
+                                    format!("{}", self.settings.generation.max_tokens),
+                                    cx,
+                                ),
                             )),
                     ),
             )
@@ -127,12 +137,16 @@ impl Root {
                                         RadioGroup::new("prompt-language")
                                             .children(prompt_radios)
                                             .selected_index(Some(selected_prompt_language))
-                                            .on_change(cx.listener(|this, index: &usize, _, cx| {
-                                                if let Some((_, language)) = PROMPT_LANGUAGES.get(*index) {
-                                                    this.settings.prompt.language = *language;
-                                                    this.auto_save(cx);
-                                                }
-                                            })),
+                                            .on_change(cx.listener(
+                                                |this, index: &usize, _, cx| {
+                                                    if let Some((_, language)) =
+                                                        PROMPT_LANGUAGES.get(*index)
+                                                    {
+                                                        this.settings.prompt.language = *language;
+                                                        this.auto_save(cx);
+                                                    }
+                                                },
+                                            )),
                                     ),
                             )
                             .child(
@@ -142,9 +156,7 @@ impl Root {
                                         "스타일 (용어집보다 우선순위가 낮습니다)",
                                         cx,
                                     ))
-                                    .child(
-                                        h_flex().gap_2().flex_wrap().children(style_buttons),
-                                    ),
+                                    .child(h_flex().gap_2().flex_wrap().children(style_buttons)),
                             )
                             .child(
                                 h_flex()
@@ -154,19 +166,24 @@ impl Root {
                                         Switch::new("preserve-delimiters")
                                             .label("구분자 보존")
                                             .checked(self.settings.prompt.preserve_delimiters)
-                                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                                                this.settings.prompt.preserve_delimiters = *checked;
-                                                this.auto_save(cx);
-                                            })),
+                                            .on_change(cx.listener(
+                                                |this, checked: &bool, _, cx| {
+                                                    this.settings.prompt.preserve_delimiters =
+                                                        *checked;
+                                                    this.auto_save(cx);
+                                                },
+                                            )),
                                     )
                                     .child(
                                         Switch::new("use-glossary")
                                             .label("용어집 적용")
                                             .checked(self.settings.prompt.use_glossary)
-                                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                                                this.settings.prompt.use_glossary = *checked;
-                                                this.auto_save(cx);
-                                            })),
+                                            .on_change(cx.listener(
+                                                |this, checked: &bool, _, cx| {
+                                                    this.settings.prompt.use_glossary = *checked;
+                                                    this.auto_save(cx);
+                                                },
+                                            )),
                                     ),
                             ),
                     ),
@@ -266,12 +283,10 @@ impl Root {
                                 "네트워크 환경에 따라 Hugging Face 또는 미러를 선택하세요.",
                                 cx,
                             ))
-                            .child(
-                                h_flex().gap_2().children([
-                                    self.base_url_button("Hugging Face", "https://huggingface.co", cx),
-                                    self.base_url_button("hf-mirror.com", "https://hf-mirror.com", cx),
-                                ]),
-                            )
+                            .child(h_flex().gap_2().children([
+                                self.base_url_button("Hugging Face", "https://huggingface.co", cx),
+                                self.base_url_button("hf-mirror.com", "https://hf-mirror.com", cx),
+                            ]))
                             .child(widgets::muted(self.settings.download_base.clone(), cx)),
                     ),
             )
@@ -314,9 +329,9 @@ impl Root {
                     .clamp(16, 8192) as u32;
             }
             "ctx" => {
-                self.settings.server.ctx_size =
-                    (self.settings.server.ctx_size as i64 + direction as i64 * 1024)
-                        .clamp(512, 32_768) as u32;
+                self.settings.server.ctx_size = (self.settings.server.ctx_size as i64
+                    + direction as i64 * 1024)
+                    .clamp(512, 32_768) as u32;
             }
             "threads" => {
                 self.settings.server.threads =
@@ -359,4 +374,3 @@ fn stepper(id: &'static str, value: String, cx: &mut Context<Root>) -> Div {
     let inc = cx.listener(move |this, _, _, cx| this.adjust_setting(id, 1.0, cx));
     widgets::stepper(id, value, dec, inc)
 }
-
