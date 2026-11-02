@@ -1115,7 +1115,7 @@ impl Root {
                 parts.join(" · ")
             }
             _ if self.translating => "번역 중…".to_string(),
-            _ => "Ctrl+Enter로 번역".to_string(),
+            _ => String::new(),
         }
     }
 }

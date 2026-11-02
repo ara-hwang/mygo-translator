@@ -42,19 +42,10 @@ impl Root {
             .border_color(cx.theme().title_bar_border)
             .bg(cx.theme().title_bar)
             .child(
-                v_flex()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::BOLD)
-                            .child("HyMT"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Tencent Hy-MT2 · 오프라인 번역"),
-                    ),
+                div()
+                    .text_lg()
+                    .font_weight(FontWeight::BOLD)
+                    .child("HyMT"),
             )
             .child(
                 TabBar::new("tabs")

@@ -21,10 +21,13 @@ impl Root {
             .gap_3()
             .child(self.render_language_bar(cx))
             .child(
+                // h_flex centers on the cross axis by default; the panels must
+                // stretch to fill the leftover height instead.
                 h_flex()
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
+                    .items_stretch()
                     .gap_3()
                     .child(self.render_source_panel(cx))
                     .child(self.render_output_panel(cx)),
@@ -39,9 +42,10 @@ impl Root {
             .flex_shrink_0()
             .flex_wrap()
             .child(
-                Combobox::new(&self.source_combo)
-                    .menu_max_h(rems(16.0))
-                    .w(px(200.0)),
+                // The combobox fills its parent (size_full), so the width belongs here.
+                div().w(px(220.0)).child(
+                    Combobox::new(&self.source_combo).menu_max_h(rems(16.0)),
+                ),
             )
             .child(
                 Button::new("swap-langs")
@@ -53,9 +57,9 @@ impl Root {
                     })),
             )
             .child(
-                Combobox::new(&self.target_combo)
-                    .menu_max_h(rems(16.0))
-                    .w(px(200.0)),
+                div().w(px(220.0)).child(
+                    Combobox::new(&self.target_combo).menu_max_h(rems(16.0)),
+                ),
             )
             .child(div().flex_1())
             .child(self.glossary_button(cx))
