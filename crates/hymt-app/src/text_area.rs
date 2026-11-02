@@ -218,12 +218,14 @@ impl TextArea {
     }
 
     fn replace_range(&mut self, range: Range<usize>, text: &str) -> usize {
-        let mut content = String::with_capacity(self.content.len() + text.len());
-        content.push_str(&self.content[..range.start]);
+        let start = range.start.min(self.content.len());
+        let end = range.end.clamp(start, self.content.len());
+        let mut content = String::with_capacity(self.content.len() - (end - start) + text.len());
+        content.push_str(&self.content[..start]);
         content.push_str(text);
-        content.push_str(&self.content[range.end..]);
+        content.push_str(&self.content[end..]);
         self.content = content.into();
-        range.start + text.len()
+        start + text.len()
     }
 
     fn insert_text(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -373,7 +375,9 @@ impl TextArea {
             .shaped
             .closest_index_for_x(px(x))
             .min(line.range.end - line.range.start);
-        line.range.start + within
+        // When the content is empty the layout was built from the placeholder
+        // text, so hit-tested offsets can exceed the real content length.
+        (line.range.start + within).min(self.content.len())
     }
 
     fn on_mouse_down(
@@ -571,7 +575,7 @@ impl EntityInputHandler for TextArea {
                 .collect::<Vec<_>>(),
             range.end,
         );
-        let line = layout.lines.get(index)?;
+        let _line = layout.lines.get(index)?;
         let y = layout.origin.y + px(index as f32 * layout.line_height) - px(layout.scroll_y);
         Some(Bounds::new(
             point(layout.origin.x, y),

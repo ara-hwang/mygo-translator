@@ -190,9 +190,10 @@ impl Root {
 
         widgets::card()
             .flex_1()
+            .min_w_0()
             .min_h_0()
             .child(panel_header("원문", Some(actions)))
-            .child(div().flex_1().min_h_0().child(self.source.clone()))
+            .child(div().flex_1().min_h_0().min_w_0().child(self.source.clone()))
     }
 
     fn render_output_panel(&self, cx: &mut Context<Self>) -> Div {
@@ -235,10 +236,12 @@ impl Root {
             div()
                 .flex_1()
                 .min_h_0()
+                .min_w_0()
                 .id("output-scroll")
                 .overflow_y_scroll()
                 .child(
                     div()
+                        .w_full()
                         .p_3()
                         .text_sm()
                         .text_color(rgb(if self.output_is_error {
@@ -253,6 +256,7 @@ impl Root {
 
         widgets::card()
             .flex_1()
+            .min_w_0()
             .min_h_0()
             .child(panel_header("번역", Some(actions)))
             .child(body)

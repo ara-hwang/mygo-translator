@@ -108,11 +108,6 @@ pub fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// One pixel horizontal rule.
-pub fn divider() -> Div {
-    div().h(gpui::px(1.0)).w_full().bg(rgb(theme::BORDER))
-}
-
 /// A colored status dot with a label.
 pub fn status_dot(color: u32, label: impl Into<SharedString>) -> Div {
     div()

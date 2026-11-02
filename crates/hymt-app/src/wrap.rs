@@ -8,9 +8,6 @@
 
 use std::ops::Range;
 
-/// A wide-enough width in pixels (used for "do not wrap" cases).
-pub const NO_LIMIT: f32 = f32::INFINITY;
-
 /// Splits `text` into visual lines that fit into `max_width`.
 ///
 /// `measure(offset)` must return the horizontal position of the byte offset *relative to the
@@ -218,6 +215,6 @@ mod tests {
 
     #[test]
     fn an_unlimited_width_never_wraps() {
-        assert_eq!(wrapped("hello world", NO_LIMIT), vec!["hello world"]);
+        assert_eq!(wrapped("hello world", f32::INFINITY), vec!["hello world"]);
     }
 }

@@ -33,10 +33,3 @@ pub const SELECTION: u32 = 0x2f4a7d;
 pub const PLACEHOLDER: u32 = 0x5d6777;
 /// Caret color.
 pub const CARET: u32 = 0x8fb2ff;
-
-/// Standard gap between major sections.
-pub const GAP: f32 = 14.0;
-/// Standard inner padding of panels.
-pub const PAD: f32 = 16.0;
-/// Corner radius for panels.
-pub const RADIUS: f32 = 10.0;
