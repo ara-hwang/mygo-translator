@@ -92,6 +92,53 @@ pub struct DesktopSettings {
     pub start_with_windows: bool,
 }
 
+/// Smallest editor text size, in pixels.
+pub const TEXT_SIZE_MIN: u16 = 10;
+/// Largest editor text size, in pixels.
+pub const TEXT_SIZE_MAX: u16 = 32;
+/// Pixels added or removed by one zoom step.
+pub const TEXT_SIZE_STEP: u16 = 2;
+/// Text size used when nothing is stored or the user resets.
+pub const TEXT_SIZE_DEFAULT: u16 = 14;
+
+/// Direction of a text size change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextZoom {
+    In,
+    Out,
+    Reset,
+}
+
+/// Forces a text size into the supported range.
+pub fn clamp_text_size(size: u16) -> u16 {
+    size.clamp(TEXT_SIZE_MIN, TEXT_SIZE_MAX)
+}
+
+/// Applies one zoom step to `size`, staying inside the supported range.
+pub fn zoom_text_size(size: u16, zoom: TextZoom) -> u16 {
+    let size = clamp_text_size(size);
+    match zoom {
+        TextZoom::In => clamp_text_size(size.saturating_add(TEXT_SIZE_STEP)),
+        TextZoom::Out => clamp_text_size(size.saturating_sub(TEXT_SIZE_STEP)),
+        TextZoom::Reset => TEXT_SIZE_DEFAULT,
+    }
+}
+
+/// Line height for `size`, keeping the input's stock 20px rows at the default 14px text.
+pub fn text_line_height(size: u16) -> f32 {
+    (f32::from(clamp_text_size(size)) * 20.0 / f32::from(TEXT_SIZE_DEFAULT)).round()
+}
+
+/// Reads a text size, falling back to the default for anything that is not a number so
+/// one malformed value cannot discard the whole settings file.
+fn lenient_text_size<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u16, D::Error> {
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value
+        .as_u64()
+        .map(|n| clamp_text_size(n.min(u64::from(u16::MAX)) as u16))
+        .unwrap_or(TEXT_SIZE_DEFAULT))
+}
+
 /// UI color theme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -151,6 +198,9 @@ pub struct Settings {
     pub prompt: PromptSettings,
     /// Tray and Windows startup options.
     pub desktop: DesktopSettings,
+    /// Text size in pixels shared by the source and translation editors.
+    #[serde(deserialize_with = "lenient_text_size")]
+    pub text_size: u16,
 }
 
 impl Default for Settings {
@@ -164,6 +214,7 @@ impl Default for Settings {
             generation: GenerationSettings::default(),
             prompt: PromptSettings::default(),
             desktop: DesktopSettings::default(),
+            text_size: TEXT_SIZE_DEFAULT,
         }
     }
 }
@@ -204,6 +255,8 @@ impl Settings {
             clamp_finite(self.generation.repeat_penalty, 0.5, 2.0, 1.05);
         self.generation.top_k = self.generation.top_k.clamp(-1, 200);
         self.generation.max_tokens = self.generation.max_tokens.clamp(16, 8192);
+
+        self.text_size = clamp_text_size(self.text_size);
 
         if self.prompt.style.chars().count() > 200 {
             self.prompt.style = self.prompt.style.chars().take(200).collect();
@@ -344,6 +397,59 @@ mod tests {
             serde_json::from_str(r#"{"source_lang":"ko","target_lang":"en"}"#).unwrap();
         assert_eq!(settings.appearance, Appearance::System);
         assert_eq!(settings.desktop, DesktopSettings::default());
+    }
+
+    #[test]
+    fn text_size_zoom_steps_and_clamps() {
+        assert_eq!(zoom_text_size(14, TextZoom::In), 16);
+        assert_eq!(zoom_text_size(14, TextZoom::Out), 12);
+        assert_eq!(zoom_text_size(30, TextZoom::Reset), TEXT_SIZE_DEFAULT);
+        assert_eq!(zoom_text_size(TEXT_SIZE_MAX, TextZoom::In), TEXT_SIZE_MAX);
+        assert_eq!(zoom_text_size(TEXT_SIZE_MIN, TextZoom::Out), TEXT_SIZE_MIN);
+        assert_eq!(zoom_text_size(31, TextZoom::In), TEXT_SIZE_MAX);
+        assert_eq!(
+            zoom_text_size(0, TextZoom::In),
+            TEXT_SIZE_MIN + TEXT_SIZE_STEP
+        );
+        assert_eq!(
+            zoom_text_size(u16::MAX, TextZoom::Out),
+            TEXT_SIZE_MAX - TEXT_SIZE_STEP
+        );
+    }
+
+    #[test]
+    fn line_height_scales_with_text_size() {
+        assert_eq!(text_line_height(TEXT_SIZE_DEFAULT), 20.0);
+        assert_eq!(text_line_height(28), 40.0);
+        assert_eq!(text_line_height(TEXT_SIZE_MIN), 14.0);
+        assert!(text_line_height(TEXT_SIZE_MAX) > f32::from(TEXT_SIZE_MAX));
+    }
+
+    #[test]
+    fn text_size_is_sanitized_and_persisted() {
+        let sized = |text_size| Settings {
+            text_size,
+            ..Settings::default()
+        };
+        assert_eq!(sized(2).sanitized().text_size, TEXT_SIZE_MIN);
+        assert_eq!(sized(999).sanitized().text_size, TEXT_SIZE_MAX);
+
+        let dir = TempDir::new("settings-text-size");
+        let path = dir.path().join("settings.json");
+        sized(20).save(&path).unwrap();
+        let (loaded, warning) = Settings::load_or_default(&path);
+        assert!(warning.is_none());
+        assert_eq!(loaded.text_size, 20);
+    }
+
+    #[test]
+    fn missing_or_malformed_text_size_falls_back_to_default() {
+        let parse = |json: &str| serde_json::from_str::<Settings>(json).unwrap().text_size;
+        assert_eq!(parse(r#"{"source_lang":"ko"}"#), TEXT_SIZE_DEFAULT);
+        assert_eq!(parse(r#"{"text_size":"big"}"#), TEXT_SIZE_DEFAULT);
+        assert_eq!(parse(r#"{"text_size":{"source":18}}"#), TEXT_SIZE_DEFAULT);
+        assert_eq!(parse(r#"{"text_size":100000}"#), TEXT_SIZE_MAX);
+        assert_eq!(parse(r#"{"text_size":18}"#), 18);
     }
 
     #[test]

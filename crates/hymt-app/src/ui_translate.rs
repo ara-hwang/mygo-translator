@@ -7,7 +7,8 @@ use gpui_kit::component::input::Textarea;
 use gpui_kit::component::progress::Progress;
 use gpui_kit::component::{h_flex, v_flex, Disableable, Selectable};
 use gpui_kit::prelude::*;
-use gpui_kit::{div, px, relative, rems, Context, Div, Window};
+use gpui_kit::{div, px, relative, rems, Context, Div, KeyDownEvent, Window};
+use hymt_core::settings::{text_line_height, zoom_text_size, TextZoom, TEXT_SIZE_DEFAULT};
 
 use crate::root::{Root, STYLE_PRESETS};
 use crate::widgets;
@@ -19,6 +20,7 @@ impl Root {
             .min_h_0()
             .p_4()
             .gap_3()
+            .capture_key_down(cx.listener(Self::on_text_zoom_key))
             .child(self.render_language_bar(cx))
             .child(
                 // h_flex centers on the cross axis by default; the panels must
@@ -66,6 +68,7 @@ impl Root {
             .child(div().flex_1())
             .child(self.glossary_button(cx))
             .child(self.style_button(cx))
+            .child(self.text_size_controls(cx))
     }
 
     fn glossary_button(&self, cx: &Context<Self>) -> Button {
@@ -131,11 +134,13 @@ impl Root {
                 cx,
             ))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(Textarea::new(&self.source).h(relative(1.0)).bordered(false)),
+                div().flex_1().min_h_0().min_w_0().child(
+                    Textarea::new(&self.source)
+                        .h(relative(1.0))
+                        .bordered(false)
+                        .text_size(px(f32::from(self.settings.text_size)))
+                        .line_height(px(text_line_height(self.settings.text_size))),
+                ),
             )
     }
 
@@ -179,7 +184,9 @@ impl Root {
                 div().flex_1().min_h_0().min_w_0().child(
                     Textarea::new(&self.output_state)
                         .h(relative(1.0))
-                        .readonly(true),
+                        .readonly(true)
+                        .text_size(px(f32::from(self.settings.text_size)))
+                        .line_height(px(text_line_height(self.settings.text_size))),
                 ),
             )
     }
@@ -224,6 +231,70 @@ impl Root {
             .child(div().flex_1())
             .child(widgets::muted(self.stats_line(), cx))
             .child(primary)
+    }
+
+    /// `A- 14 A+` controls shared by both editors; clicking the size resets it.
+    fn text_size_controls(&self, cx: &Context<Self>) -> Div {
+        let size = self.settings.text_size;
+        let button = |id: &'static str, zoom: TextZoom, label: String, tip: &'static str| {
+            Button::new(id)
+                .ghost()
+                .compact()
+                .label(label)
+                .tooltip(tip)
+                .accessibility_label(tip)
+                .on_click(cx.listener(move |this, _, _, cx| this.zoom_text(zoom, cx)))
+        };
+        h_flex()
+            .items_center()
+            .gap_0p5()
+            .child(button(
+                "text-size-dec",
+                TextZoom::Out,
+                "A-".into(),
+                "글자 작게  Ctrl+-",
+            ))
+            .child(
+                button(
+                    "text-size-reset",
+                    TextZoom::Reset,
+                    size.to_string(),
+                    "글자 크기 초기화  Ctrl+0",
+                )
+                .selected(size != TEXT_SIZE_DEFAULT),
+            )
+            .child(button(
+                "text-size-inc",
+                TextZoom::In,
+                "A+".into(),
+                "글자 크게  Ctrl+=",
+            ))
+    }
+
+    fn zoom_text(&mut self, zoom: TextZoom, cx: &mut Context<Self>) {
+        let next = zoom_text_size(self.settings.text_size, zoom);
+        if next != self.settings.text_size {
+            self.settings.text_size = next;
+            let _ = self.save_settings();
+            cx.notify();
+        }
+    }
+
+    /// Ctrl+= / Ctrl+- / Ctrl+0 change the shared editor text size.
+    fn on_text_zoom_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let m = &keystroke.modifiers;
+        if !m.control || m.alt || m.platform {
+            return;
+        }
+        let zoom = match keystroke.key.as_str() {
+            "=" | "+" => TextZoom::In,
+            "-" => TextZoom::Out,
+            "0" => TextZoom::Reset,
+            _ => return,
+        };
+        self.zoom_text(zoom, cx);
+        cx.stop_propagation();
     }
 
     fn on_cycle_style(&mut self, cx: &mut Context<Self>) {
