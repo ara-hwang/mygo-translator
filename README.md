@@ -40,7 +40,7 @@ GPUI(Rust UI 프레임워크)로 만든 데스크톱 번역기입니다. 추론�
 ## 빠른 시작
 
 1. **앱 실행**
-   릴리스 ZIP을 압축 해제하고 `hymt.exe`를 실행합니다. 또는 소스에서 빌드합니다.
+   GitHub Releases에서 설치 마법사(`-setup.exe`)를 실행하거나 휴대용 ZIP을 압축 해제한 뒤 `hymt.exe`를 실행합니다. 또는 소스에서 빌드합니다.
    ```powershell
    git clone <this-repo> hymt
    cd hymt

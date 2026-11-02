@@ -72,10 +72,22 @@ jobs:
           "zip=dist\$name.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          & $iscc ".\scripts\installer.iss" "/DAppVersion=$($version -replace '^v', '')"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed" }
+
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.name }}
-          path: ${{ steps.package.outputs.zip }}
+          path: |
+            ${{ steps.package.outputs.zip }}
+            dist/*.exe
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -92,8 +104,10 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           body: |
-            - Windows 11용 오프라인 번역 앱 제공
+            - Windows 11용 오프라인 번역 앱 제공 (설치 마법사 실행 파일과 휴대용 ZIP)
             - 원문·번역 공통 글자 크기 조절 및 단축키 지원
             - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.exe
           fail_on_unmatched_files: true
