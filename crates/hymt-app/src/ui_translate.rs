@@ -52,6 +52,8 @@ impl Root {
                     .ghost()
                     .compact()
                     .icon(IconName::ArrowLeftRight)
+                    .tooltip("언어 교체")
+                    .accessibility_label("언어 교체")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.swap_languages(window, cx);
                     })),
@@ -100,18 +102,22 @@ impl Root {
             .gap_1()
             .child(
                 Button::new("paste")
-                    .text()
+                    .ghost()
                     .compact()
-                    .label("붙여넣기")
+                    .icon(IconName::ClipboardPaste)
+                    .tooltip("붙여넣기")
+                    .accessibility_label("붙여넣기")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.paste_into_source(window, cx);
                     })),
             )
             .child(
                 Button::new("clear")
-                    .text()
+                    .ghost()
                     .compact()
-                    .label("지우기")
+                    .icon(IconName::Eraser)
+                    .tooltip("지우기")
+                    .accessibility_label("지우기")
                     .on_click(cx.listener(|this, _, window, cx| this.clear_all(window, cx))),
             );
 
@@ -139,18 +145,22 @@ impl Root {
             .gap_1()
             .child(
                 Button::new("to-input")
-                    .text()
+                    .ghost()
                     .compact()
-                    .label("입력으로")
+                    .icon(IconName::ArrowLeft)
+                    .tooltip("입력으로")
+                    .accessibility_label("입력으로")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.output_to_input(window, cx);
                     })),
             )
             .child(
                 Button::new("copy")
-                    .text()
+                    .ghost()
                     .compact()
-                    .label("복사")
+                    .icon(IconName::Copy)
+                    .tooltip("복사")
+                    .accessibility_label("복사")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.copy_output(window, cx);
                     })),

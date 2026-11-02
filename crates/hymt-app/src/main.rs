@@ -72,7 +72,9 @@ fn main() {
     let start_hidden = autostart_launch && settings.desktop.keep_in_tray;
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        // Embed the full Lucide catalog (~0.7 MB) so icon-only action buttons can
+        // use icons that are absent from the default component bundle.
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
