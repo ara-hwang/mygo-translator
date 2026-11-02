@@ -44,7 +44,6 @@ impl Root {
             .child(div().text_lg().font_weight(FontWeight::BOLD).child("HyMT"))
             .child(
                 TabBar::new("tabs")
-                    .segmented()
                     .selected_index(selected)
                     .children([
                         UiTab::new().label("번역"),
