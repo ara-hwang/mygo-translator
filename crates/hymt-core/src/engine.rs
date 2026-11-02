@@ -257,12 +257,11 @@ fn run(
             match process.try_wait() {
                 Ok(Some(status)) => {
                     child = None;
-                    if pending.take().is_some() {
-                        exit_message = Some(format!(
-                            "모델 서버가 종료되었습니다 ({status}). {}",
-                            tail_summary(&tail)
-                        ));
-                    }
+                    pending = None;
+                    exit_message = Some(format!(
+                        "모델 서버가 종료되었습니다 ({status}). {}",
+                        tail_summary(&tail)
+                    ));
                 }
                 Ok(None) => {}
                 Err(err) => {

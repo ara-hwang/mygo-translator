@@ -99,16 +99,33 @@ pub fn visual_line_for_cursor(lines: &[Range<usize>], cursor: usize) -> usize {
         if cursor < line.end {
             return index;
         }
-        if cursor == line.end && line.is_empty() {
-            return index;
-        }
         if cursor == line.end {
-            // At a wrap boundary the caret belongs to the next line, unless this line ends the
-            // buffer (then there is no next line) or ends with an explicit newline.
-            return index + 1;
+            if line.is_empty() {
+                return index;
+            }
+            // Soft-wrapped ranges meet at the same byte offset; that caret belongs to the next
+            // visual line. An explicit newline leaves a one-byte gap, so its preceding caret
+            // remains at the end of this line.
+            if lines
+                .get(index + 1)
+                .is_some_and(|next| next.start == line.end)
+            {
+                return index + 1;
+            }
+            return index;
         }
     }
     lines.len().saturating_sub(1)
+}
+
+/// Returns the start or end offset of the logical line containing `cursor`.
+pub fn logical_line_boundary(text: &str, cursor: usize, end: bool) -> usize {
+    let cursor = cursor.min(text.len());
+    if end {
+        cursor + text[cursor..].find('\n').unwrap_or(text.len() - cursor)
+    } else {
+        text[..cursor].rfind('\n').map_or(0, |newline| newline + 1)
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +199,21 @@ mod tests {
     fn cursor_maps_to_lines_including_empty_ones() {
         let lines = vec![0..0, 0..0];
         assert_eq!(visual_line_for_cursor(&lines, 0), 0);
+    }
+
+    #[test]
+    fn cursor_before_explicit_newline_stays_on_previous_line() {
+        let lines = vec![0..1, 2..3];
+        assert_eq!(visual_line_for_cursor(&lines, 1), 0);
+        assert_eq!(visual_line_for_cursor(&lines, 2), 1);
+    }
+
+    #[test]
+    fn home_and_end_offsets_follow_the_current_logical_line() {
+        let text = "first\nsecond\nthird";
+        assert_eq!(logical_line_boundary(text, 9, false), 6);
+        assert_eq!(logical_line_boundary(text, 9, true), 12);
+        assert_eq!(logical_line_boundary(text, 6, false), 6);
     }
 
     #[test]

@@ -66,7 +66,10 @@ pub fn strip_special_tokens(input: &str) -> String {
     while i < bytes.len() {
         if bytes[i] == b'<' {
             // A control token is short; look ahead for a terminating '>' in a bounded window.
-            let window_end = (i + 96).min(bytes.len());
+            let mut window_end = (i + 96).min(bytes.len());
+            while !input.is_char_boundary(window_end) {
+                window_end -= 1;
+            }
             if let Some(close_rel) = input[i..window_end].find('>') {
                 let close = i + close_rel;
                 let inner = &input[i + 1..close];
@@ -116,5 +119,11 @@ mod tests {
     fn keeps_real_markup() {
         let text = "<div>번역</div> <b>굵게</b> 1 < 2";
         assert_eq!(strip_special_tokens(text), text);
+    }
+
+    #[test]
+    fn strips_special_tokens_without_slicing_inside_utf8_characters() {
+        let text = format!("<{}>", "한".repeat(40));
+        assert_eq!(strip_special_tokens(&text), text);
     }
 }
