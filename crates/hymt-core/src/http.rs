@@ -274,6 +274,9 @@ impl Response {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(HttpError::Cancelled);
             }
+            if Instant::now() >= self.deadline {
+                return Err(HttpError::Timeout);
+            }
             match self.reader.read(buf) {
                 Ok(n) => return Ok(n),
                 Err(err) if is_retryable(&err) => {
@@ -291,6 +294,9 @@ impl Response {
         loop {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(HttpError::Cancelled);
+            }
+            if Instant::now() >= self.deadline {
+                return Err(HttpError::Timeout);
             }
             if line.len() > MAX_LINE_BYTES {
                 return Err(HttpError::Protocol("응답 헤더 줄이 너무 깁니다.".into()));
@@ -415,6 +421,9 @@ fn read_head(
         if cancel.load(Ordering::Relaxed) {
             return Err(HttpError::Cancelled);
         }
+        if Instant::now() >= deadline {
+            return Err(HttpError::Timeout);
+        }
         if head.len() > MAX_HEAD_BYTES {
             return Err(HttpError::Protocol("응답 헤더가 너무 큽니다.".into()));
         }
@@ -516,6 +525,38 @@ mod tests {
             body.extend_from_slice(&chunk);
         }
         assert_eq!(String::from_utf8(body).unwrap(), "hello 세계");
+    }
+
+    #[test]
+    fn enforces_deadline_while_body_chunks_keep_arriving() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            for _ in 0..12 {
+                std::thread::sleep(Duration::from_millis(10));
+                if stream.write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+
+        let mut response = open(
+            addr,
+            &Request::get("/stream"),
+            cancel_token(),
+            Duration::from_millis(45),
+        )
+        .expect("request");
+        assert!(matches!(response.read_to_end(32), Err(HttpError::Timeout)));
+        server.join().unwrap();
     }
 
     #[test]

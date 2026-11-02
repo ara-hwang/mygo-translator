@@ -341,7 +341,13 @@ impl TextArea {
     }
 
     fn line_boundary(&mut self, end: bool, select: bool, cx: &mut Context<Self>) {
-        let offset = if end { self.content.len() } else { 0 };
+        let offset = if self.multiline {
+            wrap::logical_line_boundary(&self.content, self.cursor_offset(), end)
+        } else if end {
+            self.content.len()
+        } else {
+            0
+        };
         if select {
             self.select_to(offset, cx);
         } else {

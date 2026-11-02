@@ -174,8 +174,6 @@ pub struct Root {
     pub download: Option<Download>,
     /// Transient message.
     pub notice: Option<Notice>,
-    /// Problem encountered while loading settings.
-    pub settings_warning: Option<String>,
     exe_dir: PathBuf,
 }
 
@@ -237,8 +235,7 @@ impl Root {
             server_path,
             models,
             download: None,
-            notice: None,
-            settings_warning,
+            notice: settings_warning.map(|warning| Notice::new(warning, true)),
             exe_dir,
         };
 
@@ -364,7 +361,7 @@ impl Root {
             match download.child.try_wait() {
                 Ok(Some(status)) => {
                     let size = fs::metadata(&download.part).map(|m| m.len()).unwrap_or(0);
-                    if status.success() && size + 1024 >= download.expected {
+                    if status.success() && size == download.expected {
                         match fs::rename(&download.part, &download.dest) {
                             Ok(()) => {
                                 self.models = engine::scan_gguf(&self.paths.models_dir());
@@ -389,10 +386,17 @@ impl Root {
                             }
                         }
                     } else {
+                        let detail = if status.success() {
+                            format!(
+                                "파일 크기가 맞지 않습니다 ({} / {} 바이트)",
+                                size, download.expected
+                            )
+                        } else {
+                            format!("curl 종료 코드 {:?}", status.code())
+                        };
                         self.notice = Some(Notice::new(
                             format!(
-                                "다운로드가 중단되었습니다 (curl 종료 코드 {:?}). 모델 탭에서 다시 시도하세요.",
-                                status.code()
+                                "다운로드가 완료되지 않았습니다 ({detail}). 모델 탭에서 다시 시도하세요."
                             ),
                             true,
                         ));
@@ -591,6 +595,11 @@ impl Root {
 
     /// Clears both editors.
     pub fn clear_all(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancel) = self.cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.translate_rx = None;
+        self.translating = false;
         self.source.update(cx, |editor, cx| editor.clear(cx));
         self.output.clear();
         self.output_is_error = false;
