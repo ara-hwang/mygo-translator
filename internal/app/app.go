@@ -304,7 +304,7 @@ func (a *App) StartEngine() {
 	if config == nil {
 		a.Mu.Lock()
 		a.EngineState = core.EngineState{Kind: core.EngineFailed,
-			Detail: "사용할 수 있는 문구 없음"}
+			Detail: "사용할 수 있는 모델 없음"}
 		a.Mu.Unlock()
 		a.Invalidate()
 		return
