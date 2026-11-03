@@ -131,16 +131,19 @@ func (a *App) translateView(c *ui.Context) {
 				ui.TextArea(c, &a.OutputText).FontSize(float32(a.textSize())).Grow(1)
 			})
 		})
+		// The primary action sits at the right end of the row: the spacer
+		// takes all free width and pushes the stats and button there.
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Grow(1)
+			if stats := a.statsText(); stats != "" {
+				ui.Text(c, stats).FontSize(11)
+			}
 			if a.isStreaming() {
 				if ui.Button(c, "중지").Clicked() {
 					a.CancelTranslate()
 				}
 			} else if ui.PrimaryButton(c, "번역").Clicked() {
 				a.StartTranslate()
-			}
-			if stats := a.statsText(); stats != "" {
-				ui.Text(c, stats).FontSize(11)
 			}
 		})
 	})
