@@ -49,8 +49,8 @@ var appearanceNames = []string{"시스템", "라이트", "다크"}
 // promptLanguageNames is the instruction-language select option list.
 var promptLanguageNames = []string{"자동", "영어", "중국어"}
 
-// view is the root of the whole window: the tabs, the tab's surface and
-// one bottom bar with the engine state and the last notice.
+// view is the root of the whole window: a tab row that carries the engine
+// state, the tab's surface and the transient notice at the bottom.
 func (a *App) view(c *ui.Context) {
 	a.noticeLock()
 	a.Mu.Lock()
@@ -59,7 +59,7 @@ func (a *App) view(c *ui.Context) {
 	a.Mu.Unlock()
 
 	ui.Column(c).Fill().Children(func() {
-		ui.Tabs(c, &a.Tab, "번역", "모델", "설정")
+		a.navBar(c)
 		switch tab {
 		case tabTranslate:
 			a.translateView(c)
@@ -68,15 +68,19 @@ func (a *App) view(c *ui.Context) {
 		case tabSettings:
 			a.settingsView(c)
 		}
-		a.statusBar(c, notice)
+		if strings.TrimSpace(notice) != "" {
+			ui.Row(c).Padding(6, 10).Children(func() {
+				ui.Text(c, notice).FontSize(11)
+			})
+		}
 	})
 }
 
-// statusBar is the bottom bar: engine readiness and running tasks on the
-// left, the last notice taking the rest. It has no fixed height, so a
-// wrapping notice grows the bar instead of clipping.
-func (a *App) statusBar(c *ui.Context, notice string) {
-	ui.Row(c).Padding(6, 10).Gap(8).AlignItems(ui.Center).Children(func() {
+// navBar puts the engine state at the right end of the tab row.
+func (a *App) navBar(c *ui.Context) {
+	ui.Row(c).PaddingX(10).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Tabs(c, &a.Tab, "번역", "모델", "설정")
+		ui.Box(c).Grow(1) // Spacer pushing the engine state right.
 		if a.engineReady() {
 			ui.Text(c, "● 엔진 준비됨").FontSize(11)
 		} else {
@@ -89,10 +93,6 @@ func (a *App) statusBar(c *ui.Context, notice string) {
 		if a.isDownloading() {
 			ui.Spinner(c)
 			ui.Text(c, a.progress().Label()).FontSize(11)
-		}
-		if strings.TrimSpace(notice) != "" {
-			ui.Box(c).Grow(1) // Spacer pushing the notice right.
-			ui.Text(c, notice).FontSize(11)
 		}
 	})
 }
