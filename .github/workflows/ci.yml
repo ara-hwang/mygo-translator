@@ -103,6 +103,37 @@ jobs:
       - name: Test hymt-app
         run: cargo test -p hymt-app
 
+  go:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt check
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Needs gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - name: Build release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe .
+      - name: Test go core
+        shell: pwsh
+        run: |
+          # The server discovery test fails when llama-server is on PATH.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'llama-server.exe')) }) -join ';'
+          go test ./...
+
   package:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
@@ -169,7 +200,7 @@ jobs:
   # Keep the existing required check name, including for documentation-only PRs.
   build:
     if: always()
-    needs: [changes, format, clippy, checks, package]
+    needs: [changes, format, clippy, checks, go, package]
     runs-on: ubuntu-latest
     steps:
       - name: Verify checks
@@ -183,7 +214,7 @@ jobs:
           jobs = json.loads(os.environ['RESULTS'])
           expected = 'skipped' if os.environ['DOCS_ONLY'] == 'true' else 'success'
           ok = jobs['changes']['result'] == 'success' and all(
-              jobs[name]['result'] == expected for name in ('format', 'clippy', 'checks', 'package')
+              jobs[name]['result'] == expected for name in ('format', 'clippy', 'checks', 'go', 'package')
           )
           print({name: job['result'] for name, job in jobs.items()})
           sys.exit(0 if ok else 1)
