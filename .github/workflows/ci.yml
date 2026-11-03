@@ -108,7 +108,7 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: |
             ${{ steps.package.outputs.zip }}
-            dist/*.exe
+            dist/*-setup.exe
 
   # Keep the existing required check name, including for documentation-only PRs.
   build:
@@ -168,5 +168,5 @@ jobs:
             - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
           files: |
             dist/*.zip
-            dist/*.exe
+            dist/*-setup.exe
           fail_on_unmatched_files: true
