@@ -4,17 +4,87 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - README.md
+      - 'docs/**'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '!README.md'
+              - '!docs/**'
+
+  format:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  checks:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Locate fxc.exe
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
+          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+      - name: Test hymt-core
+        shell: pwsh
+        run: |
+          # The server discovery test fails when llama-server is on PATH.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'llama-server.exe')) }) -join ';'
+          # Loopback HTTP tests are flaky when run in parallel.
+          cargo test -p hymt-core -- --test-threads=1
+      - name: Test hymt-app
+        run: cargo test -p hymt-app
+
+  package:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -24,9 +94,12 @@ jobs:
           # Track the latest stable that the dependencies support;
           # the MSRV floor is declared by workspace rust-version.
           toolchain: stable
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Locate fxc.exe
         shell: pwsh
@@ -36,23 +109,6 @@ jobs:
           if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
           "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Using $($fxc.FullName)"
-
-      - name: Format
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets
-
-      - name: Test hymt-core
-        shell: pwsh
-        run: |
-          # The server discovery test fails when llama-server is on PATH.
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'llama-server.exe')) }) -join ';'
-          # Loopback HTTP tests are flaky when run in parallel.
-          cargo test -p hymt-core -- --test-threads=1
-
-      - name: Test hymt-app
-        run: cargo test -p hymt-app
 
       - name: Build release
         run: cargo build --release
@@ -75,8 +131,8 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found" }
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
           & $iscc ".\scripts\installer.iss" "/DAppVersion=$($version -replace '^v', '')"
@@ -88,6 +144,29 @@ jobs:
           path: |
             ${{ steps.package.outputs.zip }}
             dist/*.exe
+
+  # Keep the existing required check name, including for documentation-only PRs.
+  build:
+    if: always()
+    needs: [changes, format, checks, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ github.event_name == 'pull_request' && needs.changes.outputs.code == 'false' }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          jobs = json.loads(os.environ['RESULTS'])
+          expected = 'skipped' if os.environ['DOCS_ONLY'] == 'true' else 'success'
+          ok = jobs['changes']['result'] == 'success' and all(
+              jobs[name]['result'] == expected for name in ('format', 'checks', 'package')
+          )
+          print({name: job['result'] for name, job in jobs.items()})
+          sys.exit(0 if ok else 1)
+          PY
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
