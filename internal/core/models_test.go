@@ -1,6 +1,7 @@
 package core
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -83,7 +84,8 @@ func TestCurlArgsResumeAndVerify(t *testing.T) {
 }
 
 func TestPartPathKeepsTheModelName(t *testing.T) {
-	if got := PartPath("/tmp/Hy-MT2-1.8B-Q4_K_M.gguf"); got != "/tmp/Hy-MT2-1.8B-Q4_K_M.gguf.part" {
+	dst := filepath.Join("tmp", "Hy-MT2-1.8B-Q4_K_M.gguf")
+	if got := PartPath(dst); got != dst+".part" {
 		t.Fatalf("part = %s", got)
 	}
 }
