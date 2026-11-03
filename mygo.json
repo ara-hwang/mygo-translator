@@ -1,0 +1,7 @@
+{
+  "name": "Offline Translator",
+  "slug": "offline-translator",
+  "identifier": "app.offlinetranslator",
+  "version": "0.1.1",
+  "out": "build"
+}
