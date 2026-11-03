@@ -31,6 +31,7 @@ GPUI(Rust UI 프레임워크)로 만든 데스크톱 번역기입니다. 추론�
 | --- | --- |
 | OS | Windows 11 x64 |
 | Rust | 소스 빌드 시 1.93 이상 (stable) |
+| Go | mygo 포트 빌드 시 1.27 이상 (`go.mod` 기준) |
 | 빌드 도구 | Visual Studio Build Tools의 "Desktop development with C++" + Windows 11 SDK |
 | 런타임 | `llama-server.exe` (llama.cpp Windows 빌드) — 앱에 포함되지 않습니다 |
 | 디스크 | 모델 1.06GB(1.8B Q4) ~ 8GB(7B Q8) + 런타임 약 100MB |
@@ -165,9 +166,27 @@ crates/
 - `cargo test -p hymt-app`: **24개 테스트 통과** (트레이 아이콘, 자동 실행 경로, 단축키 조합 파서·두 번 누르기 상태머신, 클립보드 캡처 검증).
 - 단축키의 실제 등록·트리거·팝업 동작은 Windows 전용이라 이 저장소의 자동화 범위 밖입니다. Windows에서 설정 → 단축키 화면으로 직접 확인하세요.
 
+## mygo(Go) 포트
+
+같은 동작을 Go 네이티브 UI 라이브러리인 **mygo**로 포팅한 바이너리도 이 저장소에서 함께 관리합니다. 코어 로직(프롬프트, 설정 검증, 스트리밍 클라이언트, 엔진 감독, 다운로드)과 사용자 경험은 Rust 버전과 동일하고, 구조는 `crates/hymt-app`에 대응하는 `internal/app`(mygo 화면·트레이)과 `internal/core`(코어 판단 로직, 인라인 테스트)입니다.
+
+- **같은 데이터 레이아웃 공유**: `%LOCALAPPDATA%\HyMT\`의 `runtime\`, `models\`, `settings.json`을 Rust 버전과 그대로 공유하므로, 한쪽에서 런타임·모델·설정을 준비하면 다른쪽에서도 바로 동작합니다.
+- **에디터**: mygo 자체 위젯을 쓰므로 GPUI 텍스트 에디터 직접 구현(`crates/hymt-app/src/text_area.rs`)이 필요 없습니다.
+- **실행 파일**: `offline-translator.exe` (Windows GUI 서브시스템)
+
+소스 빌드:
+
+```powershell
+go vet ./...
+go test ./...                       # llama-server가 PATH에 있으면 서버 탐색 테스트만 실패함
+go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe .
+```
+
+Go 1.27+ (Windows 11 x64 기준)이면 빌드 도구 추가 설치는 필요 없습니다.
+
 ## 라이선스 및 출처
 
 - 모델: Tencent **Hy-MT2** (Apache-2.0) — <https://huggingface.co/collections/tencent/hy-mt2>
 - 추론: [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT)
-- UI: [GPUI](https://gpui.rs) (Apache-2.0)
+- UI: [GPUI](https://gpui.rs) (Apache-2.0), mygo 포트는 [mygo](https://github.com/egoist/mygo)
 - 이 애플리케이션 코드: MIT OR Apache-2.0
