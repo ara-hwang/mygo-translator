@@ -36,7 +36,7 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe
 
 ## 데이터 공유
 
-`%LOCALAPPDATA%\HyMT\`의 `runtime\`, `models\`, `settings.json`을 이전 Rust 버전과 그대로 공유한다. `settings.json` 필드 이름은 그대로 유지(`server`, `hotkey.combo`의 `ctrl/shift/alt/win/key` 등).
+`%LOCALAPPDATA%\offline-translator\`에 `runtime\`, `models\`, `settings.json`을 저장한다. 기존 `%LOCALAPPDATA%\HyMT\` 데이터는 자동 이동하거나 복사하지 않는다. `settings.json` 필드 이름은 그대로 유지(`server`, `hotkey.combo`의 `ctrl/shift/alt/win/key` 등).
 
 ## 테스트
 
@@ -49,7 +49,7 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe
 - 대상: Windows 11 x64, go.mod의 Go 1.27 이상.
 - OS 분기는 빌드 태그 파일(`engine_windows.go` / `engine_other.go`, `capture_windows.go` / `capture_other.go`)로 분리한다.
 - Win32 접근은 `internal/winapi`에서 syscall로만 하고, 나머지는 mygo 공개 API로만 쓴다.
-- 릴리스 빌드는 GUI 서브시스템이라 콘솔 출력이 보이지 않는다. 진단은 llama-server 로그(엔진 로그는 모델 탭)와 `%LOCALAPPDATA%\HyMT\logs\`에서 확인.
+- 릴리스 빌드는 GUI 서브시스템이라 콘솔 출력이 보이지 않는다. 진단은 llama-server 로그(엔진 로그는 모델 탭)와 `%LOCALAPPDATA%\offline-translator\logs\`에서 확인.
 
 ## 규칙
 

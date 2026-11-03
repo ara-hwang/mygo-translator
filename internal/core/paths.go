@@ -7,12 +7,11 @@ import (
 
 // AppPaths resolves locations for settings, models and logs.
 //
-// Two layouts are supported (matching the Rust app so both share one data
-// directory):
+// Two layouts are supported:
 //
 //   - Portable: if portable.txt sits next to the executable, or a models
 //     folder is next to it, everything stays beside the .exe.
-//   - Installed: otherwise %LOCALAPPDATA%\HyMT, falling back to ~/.hymt
+//   - Installed: otherwise %LOCALAPPDATA%\offline-translator, falling back to ~/.offline-translator
 //     (and the temp folder as a last resort).
 type AppPaths struct {
 	root string
@@ -43,12 +42,12 @@ func DetectPathsWith(exeDir, localAppData string) AppPaths {
 		}
 	}
 	if localAppData != "" {
-		return AppPathsFromRoot(filepath.Join(localAppData, "HyMT"))
+		return AppPathsFromRoot(filepath.Join(localAppData, "offline-translator"))
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return AppPathsFromRoot(filepath.Join(home, ".hymt"))
+		return AppPathsFromRoot(filepath.Join(home, ".offline-translator"))
 	}
-	return AppPathsFromRoot(filepath.Join(os.TempDir(), "hymt"))
+	return AppPathsFromRoot(filepath.Join(os.TempDir(), "offline-translator"))
 }
 
 // Root is the base directory for everything else.

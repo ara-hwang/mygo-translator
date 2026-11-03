@@ -26,7 +26,7 @@ param(
     [ValidateSet('cpu', 'cuda', 'vulkan', 'hip')]
     [string]$Variant = 'cpu',
 
-    # Defaults to %LOCALAPPDATA%\HyMT\runtime, or <repo>\runtime in portable mode.
+    # Defaults to %LOCALAPPDATA%\offline-translator\runtime, or <repo>\runtime in portable mode.
     [string]$Destination,
 
     [switch]$Force
@@ -39,7 +39,7 @@ if (-not $Destination) {
     if ((Test-Path (Join-Path $repoRoot 'portable.txt')) -or (Test-Path (Join-Path $repoRoot 'models'))) {
         $Destination = Join-Path $repoRoot 'runtime'
     } elseif ($env:LOCALAPPDATA) {
-        $Destination = Join-Path $env:LOCALAPPDATA 'HyMT\runtime'
+        $Destination = Join-Path $env:LOCALAPPDATA 'offline-translator\runtime'
     } else {
         $Destination = Join-Path $repoRoot 'runtime'
     }
