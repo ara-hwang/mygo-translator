@@ -29,6 +29,9 @@ const (
 	tabSettings  = 2
 )
 
+// autoSourceLabel is the source select's detect-language entry.
+const autoSourceLabel = "자동"
+
 // App is the shared state the UI reads and mutates. Fields written from
 // goroutines are guarded by Mu; the view runs on the main thread.
 type App struct {
@@ -71,7 +74,13 @@ func New() *App {
 	a.paths = core.DetectPaths()
 	_ = a.paths.Ensure()
 	a.settings, a.Notice = core.LoadOrDefault(a.paths.SettingsFile())
-	a.SourceSelName = languageName(a.settings.SourceLang)
+	// AutoSource keeps the source select on 자동 across restarts; its stored
+	// concrete language stays as the detect-failure fallback.
+	if a.settings.AutoSource {
+		a.SourceSelName = autoSourceLabel
+	} else {
+		a.SourceSelName = languageName(a.settings.SourceLang)
+	}
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.AppearanceSel = appearanceName(a.settings.Appearance)
 	a.PromptLanguageSel = promptLanguageName(a.settings.Prompt.Language)
@@ -130,12 +139,16 @@ func appearanceName(a core.Appearance) string {
 	}
 }
 
-// syncLanguageSelects copies the select names back into the settings.
+// syncLanguageSelects copies the select names back into the settings. The
+// 자동 entry only flips AutoSource: the stored source language stays as the
+// detect-failure fallback.
 func (a *App) syncLanguageSelects() {
 	a.Mu.Lock()
-	source := languageCodeByName(a.SourceSelName)
 	target := languageCodeByName(a.TargetSelName)
-	if source != "" {
+	if a.SourceSelName == autoSourceLabel {
+		a.settings.AutoSource = true
+	} else if source := languageCodeByName(a.SourceSelName); source != "" {
+		a.settings.AutoSource = false
 		a.settings.SourceLang = source
 	}
 	if target != "" && target != a.settings.SourceLang {
@@ -253,10 +266,20 @@ func (a *App) hotkeyCombo() core.HotkeyCombo {
 	return core.DefaultHotkeyCombo()
 }
 
-// SwapLanguages exchanges the source and target languages.
+// SwapLanguages exchanges the source and target languages. With the source
+// select on 자동 the direction is resolved from the source text first, since
+// auto cannot move to the target side: the resolved pair becomes the newly
+// stored manual selection.
 func (a *App) SwapLanguages() {
 	a.Mu.Lock()
-	a.settings.SourceLang, a.settings.TargetLang = a.settings.TargetLang, a.settings.SourceLang
+	sourceCode := a.settings.SourceLang
+	if a.SourceSelName == autoSourceLabel {
+		if lang, ok := core.Detect(a.SourceText); ok {
+			sourceCode = lang.Code
+		}
+		a.settings.AutoSource = false
+	}
+	a.settings.SourceLang, a.settings.TargetLang = a.settings.TargetLang, sourceCode
 	a.SourceSelName = languageName(a.settings.SourceLang)
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.Mu.Unlock()
@@ -513,7 +536,36 @@ func (a *App) StartTranslate() {
 	targetCode := a.settings.TargetLang
 	promptSettings := a.settings.Prompt
 	generation := a.settings.Generation
+	persist := false
+	// With the source select on 자동 the direction is resolved from the text
+	// before the prompt is built. On a detect failure the stored source and
+	// target pair stays as it is.
+	translateNotice := ""
+	if a.SourceSelName == autoSourceLabel && strings.TrimSpace(source) != "" {
+		if _, ok := core.Detect(source); !ok {
+			translateNotice = "소스 언어를 인식하지 못했습니다. 원문 언어를 직접 선택해 주세요."
+		} else {
+			oldTarget := a.settings.TargetLang
+			sourceCode, newTarget, swapped := core.ResolveDirection(source, a.settings.SourceLang, a.settings.TargetLang)
+			if sourceCode != a.settings.SourceLang || newTarget != oldTarget {
+				persist = true
+			}
+			a.settings.SourceLang = sourceCode
+			a.settings.TargetLang = newTarget
+			targetCode = newTarget
+			if newTarget != oldTarget {
+				a.TargetSelName = languageName(newTarget)
+			}
+			if swapped {
+				translateNotice = "감지된 언어가 타깃과 같아 방향을 바꿉니다."
+			}
+		}
+	}
+	settings := a.settings
 	a.Mu.Unlock()
+	if persist {
+		go settings.Save(a.paths.SettingsFile())
+	}
 
 	// An empty input is expected; the source editor's placeholder carries
 	// the hint, not the notice bar.
@@ -541,7 +593,7 @@ func (a *App) StartTranslate() {
 	a.Streaming = true
 	a.OutputText = ""
 	a.OutputStats = ""
-	a.Notice = ""
+	a.Notice = translateNotice
 	a.Mu.Unlock()
 	a.Invalidate()
 

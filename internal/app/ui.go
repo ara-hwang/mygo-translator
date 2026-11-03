@@ -18,6 +18,17 @@ func languageNames() []string {
 	return names
 }
 
+// sourceLanguageNames is the source select option list: the detect-language
+// entry followed by every language.
+func sourceLanguageNames() []string {
+	names := make([]string, 0, len(core.Languages)+1)
+	names = append(names, autoSourceLabel)
+	for _, lang := range core.Languages {
+		names = append(names, lang.NameKo)
+	}
+	return names
+}
+
 // appearanceNames is the appearance select option list.
 var appearanceNames = []string{"시스템", "라이트", "다크"}
 
@@ -128,7 +139,7 @@ func (a *App) progress() core.DownloadProgress {
 func (a *App) translateView(c *ui.Context) {
 	ui.Column(c).Fill().Padding(actionInset).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Select(c, &a.SourceSelName, languageNames()).Width(150).OnChange(a.syncLanguageSelects)
+			ui.Select(c, &a.SourceSelName, sourceLanguageNames()).Width(150).OnChange(a.syncLanguageSelects)
 			if ui.Button(c, "→").Clicked() {
 				a.SwapLanguages()
 			}

@@ -205,6 +205,39 @@ func TestSourceAndTargetCanNeverBeIdentical(t *testing.T) {
 	}
 }
 
+func TestAutoSourcePersistsAndDefaultsOff(t *testing.T) {
+	if DefaultSettings().AutoSource {
+		t.Fatal("auto source must be off by default so the manual selection stays")
+	}
+
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := DefaultSettings()
+	s.AutoSource = true
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, warning := LoadOrDefault(path)
+	if warning != "" {
+		t.Fatal(warning)
+	}
+	if !loaded.AutoSource {
+		t.Fatalf("auto_source must persist, settings = %+v", loaded)
+	}
+
+	// Files written before this field existed must keep the manual selection.
+	oldPath := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(oldPath, []byte(`{"source_lang":"ko","target_lang":"en"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, warning = LoadOrDefault(oldPath)
+	if warning != "" {
+		t.Fatal(warning)
+	}
+	if loaded.AutoSource {
+		t.Fatalf("absent auto_source must default to the manual selection: %+v", loaded)
+	}
+}
+
 func TestHotkeyDefaultsAreDisabledWithStandardBindings(t *testing.T) {
 	hotkey := DefaultSettings().Hotkey
 	if hotkey.Enabled {
