@@ -18,15 +18,13 @@ permissions:
   contents: read
   pull-requests: read
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
         id: filter
         if: github.event_name == 'pull_request'
@@ -36,72 +34,6 @@ jobs:
             code:
               - '!README.md'
               - '!docs/**'
-
-  format:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: rustfmt
-      - run: cargo fmt --all --check
-
-  clippy:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
-      - name: Locate fxc.exe
-        shell: pwsh
-        run: |
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
-          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets
-
-  checks:
-    needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
-      - name: Locate fxc.exe
-        shell: pwsh
-        run: |
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
-          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Test hymt-core
-        shell: pwsh
-        run: |
-          # The server discovery test fails when llama-server is on PATH.
-          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'llama-server.exe')) }) -join ';'
-          # Loopback HTTP tests are flaky when run in parallel.
-          cargo test -p hymt-core -- --test-threads=1
-      - name: Test hymt-app
-        run: cargo test -p hymt-app
 
   go:
     needs: changes
@@ -122,11 +54,6 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
-      - name: Build release
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe .
       - name: Test go core
         shell: pwsh
         run: |
@@ -141,39 +68,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/setup-go@v7
         with:
-          # Track the latest stable that the dependencies support;
-          # the MSRV floor is declared by workspace rust-version.
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: build
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
-
-      - name: Locate fxc.exe
-        shell: pwsh
-        run: |
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { throw "fxc.exe not found in the Windows SDK" }
-          "GPUI_FXC_PATH=$($fxc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Using $($fxc.FullName)"
+          go-version-file: go.mod
 
       - name: Build release
-        run: cargo build --release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe .
 
       - name: Package
         id: package
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          $name = "hymt-$version-windows-x64"
+          $name = "offline-translator-$version-windows-x64"
           $stage = "dist\$name"
           New-Item -ItemType Directory -Force "$stage\scripts" | Out-Null
-          Copy-Item target\release\hymt.exe $stage
+          Copy-Item dist\offline-translator.exe $stage
           Copy-Item README.md $stage
           Copy-Item scripts\setup-runtime.ps1 "$stage\scripts"
           Compress-Archive -Path "$stage\*" -DestinationPath "dist\$name.zip" -Force
@@ -200,7 +113,7 @@ jobs:
   # Keep the existing required check name, including for documentation-only PRs.
   build:
     if: always()
-    needs: [changes, format, clippy, checks, go, package]
+    needs: [changes, go, package]
     runs-on: ubuntu-latest
     steps:
       - name: Verify checks
@@ -214,7 +127,7 @@ jobs:
           jobs = json.loads(os.environ['RESULTS'])
           expected = 'skipped' if os.environ['DOCS_ONLY'] == 'true' else 'success'
           ok = jobs['changes']['result'] == 'success' and all(
-              jobs[name]['result'] == expected for name in ('format', 'clippy', 'checks', 'go', 'package')
+              jobs[name]['result'] == expected for name in ('go', 'package')
           )
           print({name: job['result'] for name, job in jobs.items()})
           sys.exit(0 if ok else 1)
@@ -236,7 +149,7 @@ jobs:
         with:
           body: |
             - Windows 11용 오프라인 번역 앱 제공 (설치 마법사 실행 파일과 휴대용 ZIP)
-            - 전역 단축키 신규 지원: 다른 앱의 선택 텍스트를 즉시 번역 (조합 `Ctrl+Shift+C`, 두 번 누르기 `Ctrl+C C` — 설정 → 단축키에서 켬)
+            - 전역 단축키: 다른 앱의 선택 텍스트를 즉시 번역 (기본 Ctrl+Shift+C — 설정 탭에서 켬)
             - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
           files: |
             dist/*.zip

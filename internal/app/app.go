@@ -243,26 +243,13 @@ func comboToAccelerator(combo core.HotkeyCombo) string {
 
 // captureSelection copies the selected text of the focused application into
 // the source editor, shows the window and starts translating.
-//
-// The Rust app first tried a UI Automation read; this port keeps the
-// clipboard fallback (a synthesized Ctrl+C) as the single path for every
-// caret-less control.
 func (a *App) captureSelection() {
-	before := mygo.Clipboard.ReadText()
-	if err := winapi.CopySelection(); err != nil {
-		return
-	}
-	text := ""
-	current := before
-	for i := 0; i < 20; i++ {
-		time.Sleep(50 * time.Millisecond)
-		current = mygo.Clipboard.ReadText()
-		if strings.TrimSpace(current) != "" && current != before {
-			text = current
-			break
-		}
-	}
-	if strings.TrimSpace(text) == "" {
+	text, err := winapi.CaptureSelected()
+	if err != nil {
+		a.Mu.Lock()
+		a.Notice = err.Error()
+		a.Mu.Unlock()
+		a.Invalidate()
 		return
 	}
 	a.Mu.Lock()
@@ -683,8 +670,8 @@ func Run() {
 		hidden := startedAtLogin(a)
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Offline Translator",
-			Width:     760,
-			MinWidth:  640,
+			Width:     920,
+			MinWidth:  700,
 			Height:    640,
 			MinHeight: 480,
 			StateKey:  "main",

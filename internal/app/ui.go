@@ -94,7 +94,9 @@ func (a *App) progress() core.DownloadProgress {
 	return a.Download
 }
 
-// translateView is the main working surface.
+// translateView is the main working surface: the language pair and the
+// text size on one bar, the source and translation editors side by side,
+// and the action row.
 func (a *App) translateView(c *ui.Context) {
 	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -102,9 +104,33 @@ func (a *App) translateView(c *ui.Context) {
 			ui.Select(c, &a.SourceSelName, languageNames()).Width(150).OnChange(a.syncLanguageSelects)
 			ui.Text(c, "→").FontSize(12)
 			ui.Select(c, &a.TargetSelName, languageNames()).Width(190).OnChange(a.syncLanguageSelects)
+			ui.Box(c).Grow(1) // Spacer pushing the text size controls right.
+			ui.Text(c, "글자 크기").FontSize(11)
+			if ui.Button(c, "A−").Clicked() {
+				a.zoomText(core.ZoomOut)
+			}
+			ui.Text(c, fmt.Sprintf("%d px", a.textSize())).FontSize(12)
+			if ui.Button(c, "A+").Clicked() {
+				a.zoomText(core.ZoomIn)
+			}
+			if ui.Button(c, "초기화").Clicked() {
+				a.zoomText(core.ZoomReset)
+			}
 		})
-		ui.Text(c, "원문").FontSize(11)
-		ui.TextArea(c, &a.SourceText).FontSize(float32(a.textSize())).Height(140)
+		// The two editors sit side by side: Grow(1) on both of their columns
+		// splits the row evenly whatever the window width is. Rows center
+		// their children vertically by default, so stretch the columns to
+		// make both editors fill the height.
+		ui.Row(c).Fill().Grow(1).Gap(8).AlignItems(ui.Stretch).Children(func() {
+			ui.Column(c).Grow(1).Gap(4).Children(func() {
+				ui.Text(c, "원문").Bold().FontSize(11)
+				ui.TextArea(c, &a.SourceText).FontSize(float32(a.textSize())).Grow(1)
+			})
+			ui.Column(c).Grow(1).Gap(4).Children(func() {
+				ui.Text(c, "번역").Bold().FontSize(11)
+				ui.TextArea(c, &a.OutputText).FontSize(float32(a.textSize())).Grow(1)
+			})
+		})
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if a.isStreaming() {
 				if ui.Button(c, "중지").Clicked() {
@@ -117,8 +143,6 @@ func (a *App) translateView(c *ui.Context) {
 				ui.Text(c, stats).FontSize(11)
 			}
 		})
-		ui.Text(c, "번역").FontSize(11)
-		ui.TextArea(c, &a.OutputText).FontSize(float32(a.textSize())).Height(240).Grow(1)
 	})
 }
 
@@ -203,20 +227,6 @@ func (a *App) settingsView(c *ui.Context) {
 		})
 		ui.Checkbox(c, keepInTray, "창을 닫아도 트레이에 유지")
 		ui.Checkbox(c, startWithWindows, "Windows 시작 시 자동 실행")
-
-		ui.Text(c, "글자 크기").Bold()
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmt.Sprintf("%d px", a.textSize())).FontSize(12)
-			if ui.Button(c, "+").Clicked() {
-				a.zoomText(core.ZoomIn)
-			}
-			if ui.Button(c, "−").Clicked() {
-				a.zoomText(core.ZoomOut)
-			}
-			if ui.Button(c, "초기화").Clicked() {
-				a.zoomText(core.ZoomReset)
-			}
-		})
 
 		ui.Text(c, "프롬프트").Bold()
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
