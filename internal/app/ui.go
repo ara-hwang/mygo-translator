@@ -24,7 +24,8 @@ var appearanceNames = []string{"시스템", "라이트", "다크"}
 // promptLanguageNames is the instruction-language select option list.
 var promptLanguageNames = []string{"자동", "영어", "중국어"}
 
-// view is the root of the whole window.
+// view is the root of the whole window: the tabs, the tab's surface and
+// one bottom bar with the engine state and the last notice.
 func (a *App) view(c *ui.Context) {
 	a.noticeLock()
 	a.Mu.Lock()
@@ -33,7 +34,6 @@ func (a *App) view(c *ui.Context) {
 	a.Mu.Unlock()
 
 	ui.Column(c).Fill().Children(func() {
-		a.statusBar(c)
 		ui.Tabs(c, &a.Tab, "번역", "모델", "설정")
 		switch tab {
 		case tabTranslate:
@@ -43,17 +43,15 @@ func (a *App) view(c *ui.Context) {
 		case tabSettings:
 			a.settingsView(c)
 		}
-		if strings.TrimSpace(notice) != "" {
-			ui.Row(c).Padding(8, 12).Children(func() {
-				ui.Text(c, notice).FontSize(11)
-			})
-		}
+		a.statusBar(c, notice)
 	})
 }
 
-// statusBar shows engine readiness and any running tasks.
-func (a *App) statusBar(c *ui.Context) {
-	ui.Row(c).Fill().Height(30).PaddingX(10).AlignItems(ui.Center).Children(func() {
+// statusBar is the bottom bar: engine readiness and running tasks on the
+// left, the last notice taking the rest. It has no fixed height, so a
+// wrapping notice grows the bar instead of clipping.
+func (a *App) statusBar(c *ui.Context, notice string) {
+	ui.Row(c).Padding(6, 10).Gap(8).AlignItems(ui.Center).Children(func() {
 		if a.engineReady() {
 			ui.Text(c, "● 엔진 준비됨").FontSize(11)
 		} else {
@@ -66,6 +64,10 @@ func (a *App) statusBar(c *ui.Context) {
 		if a.isDownloading() {
 			ui.Spinner(c)
 			ui.Text(c, a.progress().Label()).FontSize(11)
+		}
+		if strings.TrimSpace(notice) != "" {
+			ui.Box(c).Grow(1) // Spacer pushing the notice right.
+			ui.Text(c, notice).FontSize(11)
 		}
 	})
 }
