@@ -18,6 +18,31 @@ func languageNames() []string {
 	return names
 }
 
+// hotkeyModsNames is the modifier-combination dropdown.
+func hotkeyModsNames() []string {
+	names := make([]string, len(hotkeyModsOptions))
+	for i, mods := range hotkeyModsOptions {
+		names[i] = mods.Label
+	}
+	return names
+}
+
+// hotkeyKeyNames is the key dropdown: every key the mygo backend reports
+// for hotkey registration.
+func hotkeyKeyNames() []string {
+	names := make([]string, 0, 64)
+	for c := byte('A'); c <= 'Z'; c++ {
+		names = append(names, string(rune(c)))
+	}
+	for c := byte('0'); c <= '9'; c++ {
+		names = append(names, string(rune(c)))
+	}
+	for i := 1; i <= 12; i++ {
+		names = append(names, fmt.Sprintf("F%d", i))
+	}
+	return append(names, "Space", "Tab", "Enter", ",", "-", ".", "=", ";", "/", "`", "[", "\\", "]", "'")
+}
+
 // appearanceNames is the appearance select option list.
 var appearanceNames = []string{"시스템", "라이트", "다크"}
 
@@ -102,9 +127,10 @@ func (a *App) progress() core.DownloadProgress {
 func (a *App) translateView(c *ui.Context) {
 	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "언어").FontSize(12)
 			ui.Select(c, &a.SourceSelName, languageNames()).Width(150).OnChange(a.syncLanguageSelects)
-			ui.Text(c, "→").FontSize(12)
+			if ui.Button(c, "→").Clicked() {
+				a.SwapLanguages()
+			}
 			ui.Select(c, &a.TargetSelName, languageNames()).Width(190).OnChange(a.syncLanguageSelects)
 			ui.Box(c).Grow(1) // Spacer pushing the text size controls right.
 			ui.Text(c, "글자 크기").FontSize(11)
@@ -126,7 +152,10 @@ func (a *App) translateView(c *ui.Context) {
 		ui.Row(c).Fill().Grow(1).Gap(8).AlignItems(ui.Stretch).Children(func() {
 			ui.Column(c).Grow(1).Gap(4).Children(func() {
 				ui.Text(c, "원문").Bold().FontSize(11)
-				ui.TextArea(c, &a.SourceText).FontSize(float32(a.textSize())).Grow(1)
+				ui.TextArea(c, &a.SourceText).
+					Placeholder("번역할 텍스트를 입력하세요…").
+					FontSize(float32(a.textSize())).
+					Grow(1)
 			})
 			ui.Column(c).Grow(1).Gap(4).Children(func() {
 				ui.Text(c, "번역").Bold().FontSize(11)
@@ -175,9 +204,12 @@ func (a *App) modelsView(c *ui.Context) {
 				case installed:
 					ui.Text(c, "설치됨 · "+option.SizeLabel()).FontSize(11)
 				case a.isDownloading():
-					ui.Text(c, "…").FontSize(11)
+					ui.Text(c, "다른 파일 내려받는 중…").FontSize(11)
 				default:
 					ui.Text(c, option.SizeLabel()).FontSize(11)
+					if ui.Button(c, "내려받기").Clicked() {
+						a.StartDownload(option)
+					}
 				}
 			})
 		}
@@ -227,7 +259,7 @@ func (a *App) settingsView(c *ui.Context) {
 	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
 		ui.Text(c, "일반").Bold()
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "외양").FontSize(12)
+			ui.Text(c, "테마").FontSize(12)
 			ui.Select(c, &a.AppearanceSel, appearanceNames).Width(160)
 		})
 		ui.Checkbox(c, keepInTray, "창을 닫아도 트레이에 유지")
@@ -251,6 +283,14 @@ func (a *App) settingsView(c *ui.Context) {
 		ui.Checkbox(c, hotkeyEnabled, "선택한 텍스트를 자동 번역 (기본 Ctrl+Shift+C)")
 		if *hotkeyEnabled {
 			ui.Text(c, "다른 앱에서 텍스트를 선택하고 단축키를 누르면 이 창의 원문에 넣어 바로 번역합니다. 더블탭 트리거는 설정 호환성을 위해 값만 유지됩니다.").FontSize(10)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, fmt.Sprintf("조합 (%s)", a.HotkeyCurrent)).FontSize(12)
+				ui.Select(c, &a.HotkeyModsSel, hotkeyModsNames()).Width(170)
+				ui.Select(c, &a.HotkeyKeySel, hotkeyKeyNames()).Width(90)
+				if ui.Button(c, "적용").Clicked() {
+					a.applyHotkeyCombo()
+				}
+			})
 		}
 
 		if ui.PrimaryButton(c, "설정 저장").Clicked() {

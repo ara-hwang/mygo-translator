@@ -50,6 +50,11 @@ type App struct {
 	SourceSelName  string
 	TargetSelName  string
 	AppearanceSel  string
+	// HotkeyModsSel and HotkeyKeySel are the picker values of the settings
+	// tab's hotkey editor.
+	HotkeyModsSel string
+	HotkeyKeySel  string
+	HotkeyCurrent string
 
 	winMu      sync.Mutex
 	win        *mygo.Window
@@ -72,6 +77,7 @@ func New() *App {
 	a.SourceSelName = languageName(a.settings.SourceLang)
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.AppearanceSel = appearanceName(a.settings.Appearance)
+	a.syncHotkeyPickers()
 	return a
 }
 
@@ -239,6 +245,104 @@ func comboToAccelerator(combo core.HotkeyCombo) string {
 		b.WriteString(strings.ToUpper(key))
 	}
 	return b.String()
+}
+
+// hotkeyCombo returns the configured chord, or the default when none is
+// stored yet.
+func (a *App) hotkeyCombo() core.HotkeyCombo {
+	if combo := a.settings.Hotkey.Combo; combo != nil && combo.IsValid() {
+		return *combo
+	}
+	return core.DefaultHotkeyCombo()
+}
+
+// syncHotkeyPickers mirrors the stored chord into the settings tab pickers
+// and the label that names the registered trigger.
+func (a *App) syncHotkeyPickers() {
+	combo := a.hotkeyCombo()
+	a.HotkeyModsSel = hotkeyModsLabel(combo)
+	a.HotkeyKeySel = hotkeyKeyLabel(combo.Key)
+	a.HotkeyCurrent = comboToAccelerator(combo)
+}
+
+// applyHotkeyCombo stores the chord picked in the settings tab and lets
+// SaveSettings re-register it; a failed registration overwrites the success
+// Notice with its own message.
+func (a *App) applyHotkeyCombo() {
+	a.Mu.Lock()
+	combo := core.HotkeyCombo{Key: core.NormalizeHotkeyKey(a.HotkeyKeySel)}
+	for _, mods := range hotkeyModsOptions {
+		if mods.Label != a.HotkeyModsSel {
+			continue
+		}
+		combo.Ctrl, combo.Shift, combo.Alt, combo.Win = mods.Ctrl, mods.Shift, mods.Alt, mods.Win
+	}
+	switch {
+	case combo.IsValid():
+		a.settings.Hotkey.Combo = &combo
+		a.HotkeyCurrent = comboToAccelerator(combo)
+		a.Notice = "조합 단축키를 " + a.HotkeyCurrent + " 로 바꿨습니다."
+	default:
+		a.Notice = "단축키 조합이 유효하지 않아 바꾸지 않았습니다."
+	}
+	a.Mu.Unlock()
+	a.SaveSettings()
+}
+
+// SwapLanguages exchanges the source and target languages.
+func (a *App) SwapLanguages() {
+	a.Mu.Lock()
+	a.settings.SourceLang, a.settings.TargetLang = a.settings.TargetLang, a.settings.SourceLang
+	a.SourceSelName = languageName(a.settings.SourceLang)
+	a.TargetSelName = languageName(a.settings.TargetLang)
+	a.Mu.Unlock()
+	a.SaveSettings()
+}
+
+// hotkeyModsOption is one modifier choice of the settings tab pickers.
+type hotkeyModsOption struct {
+	Label                 string
+	Ctrl, Shift, Alt, Win bool
+}
+
+// hotkeyModsOptions are the modifier choices; every one has at least one
+// modifier so the stored chord stays registrable.
+var hotkeyModsOptions = []hotkeyModsOption{
+	{Label: "Ctrl", Ctrl: true},
+	{Label: "Ctrl + Shift", Ctrl: true, Shift: true},
+	{Label: "Ctrl + Alt", Ctrl: true, Alt: true},
+	{Label: "Ctrl + Shift + Alt", Ctrl: true, Shift: true, Alt: true},
+	{Label: "Ctrl + Win", Ctrl: true, Win: true},
+	{Label: "Alt", Alt: true},
+	{Label: "Alt + Shift", Shift: true, Alt: true},
+	{Label: "Alt + Win", Alt: true, Win: true},
+	{Label: "Shift + Win", Shift: true, Win: true},
+	{Label: "Win", Win: true},
+}
+
+// hotkeyModsLabel maps a chord onto its options label, defaulting to Ctrl.
+func hotkeyModsLabel(combo core.HotkeyCombo) string {
+	for _, mods := range hotkeyModsOptions {
+		if mods.Ctrl == combo.Ctrl && mods.Shift == combo.Shift &&
+			mods.Alt == combo.Alt && mods.Win == combo.Win {
+			return mods.Label
+		}
+	}
+	return hotkeyModsOptions[0].Label
+}
+
+// hotkeyKeyLabel renders a normalized stored key as an option label.
+func hotkeyKeyLabel(key string) string {
+	switch key := core.NormalizeHotkeyKey(key); key {
+	case "space":
+		return "Space"
+	case "tab":
+		return "Tab"
+	case "enter":
+		return "Enter"
+	default:
+		return strings.ToUpper(key)
+	}
 }
 
 // captureSelection copies the selected text of the focused application into
@@ -492,6 +596,12 @@ func (a *App) StartTranslate() {
 	promptSettings := a.settings.Prompt
 	generation := a.settings.Generation
 	a.Mu.Unlock()
+
+	// An empty input is expected; the source editor's placeholder carries
+	// the hint, not the notice bar.
+	if strings.TrimSpace(source) == "" {
+		return
+	}
 
 	if ok, message := core.ValidateSource(source); !ok {
 		a.Mu.Lock()
