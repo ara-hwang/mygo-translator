@@ -667,6 +667,9 @@ func Run() {
 	}
 	mygo.App.SetName("Offline Translator")
 	mygo.App.SetVersion(core.Version)
+	// Register the embedded font once, before the first frame; a failure
+	// keeps the system font instead. See ui.go for the family's use.
+	_ = registerAppFont()
 	mygo.Theme.SetSource(a.themeSource())
 	if a.settings.Desktop.StartWithWindows {
 		_ = mygo.App.SetOpenAtLogin(true)

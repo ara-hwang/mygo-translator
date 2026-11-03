@@ -27,8 +27,22 @@ var promptLanguageNames = []string{"자동", "영어", "중국어"}
 // actionInset aligns the bottom-right actions across tabs.
 const actionInset = 12
 
+// appFontFamily is the family of the embedded Pretendard Variable the
+// whole frame takes.
+const appFontFamily = "Pretendard Variable"
+
+// applyAppFont makes the frame build with the embedded Pretendard
+// Variable: widgets created after the call take its font, where they set
+// none of their own.
+func applyAppFont(c *ui.Context) {
+	t := *c.Theme()
+	t.Font = appFontFamily
+	c.SetTheme(&t)
+}
+
 // view is the root of the whole window: a tab row and the active tab surface.
 func (a *App) view(c *ui.Context) {
+	applyAppFont(c)
 	a.noticeLock()
 	a.Mu.Lock()
 	tab := a.Tab
