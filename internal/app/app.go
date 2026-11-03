@@ -35,26 +35,23 @@ type App struct {
 	paths    core.AppPaths
 	settings core.Settings
 
-	Mu             sync.Mutex
-	Tab            int
-	SourceText     string
-	OutputText     string
-	OutputStats    string
-	Streaming      bool
-	EngineState    core.EngineState
-	EngineLinesRaw []string
-	ModelFiles     []string
-	DownloadID     string
-	Download       core.DownloadProgress
-	Notice         string
-	SourceSelName  string
-	TargetSelName  string
-	AppearanceSel  string
-	// HotkeyModsSel and HotkeyKeySel are the picker values of the settings
-	// tab's hotkey editor.
-	HotkeyModsSel string
-	HotkeyKeySel  string
-	HotkeyCurrent string
+	Mu                sync.Mutex
+	Tab               int
+	SourceText        string
+	OutputText        string
+	OutputStats       string
+	Streaming         bool
+	EngineState       core.EngineState
+	EngineLinesRaw    []string
+	ModelFiles        []string
+	DownloadID        string
+	Download          core.DownloadProgress
+	Notice            string
+	SourceSelName     string
+	TargetSelName     string
+	AppearanceSel     string
+	PromptLanguageSel string
+	HotkeyRecording   bool
 
 	winMu      sync.Mutex
 	win        *mygo.Window
@@ -77,7 +74,7 @@ func New() *App {
 	a.SourceSelName = languageName(a.settings.SourceLang)
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.AppearanceSel = appearanceName(a.settings.Appearance)
-	a.syncHotkeyPickers()
+	a.PromptLanguageSel = promptLanguageName(a.settings.Prompt.Language)
 	return a
 }
 
@@ -256,39 +253,6 @@ func (a *App) hotkeyCombo() core.HotkeyCombo {
 	return core.DefaultHotkeyCombo()
 }
 
-// syncHotkeyPickers mirrors the stored chord into the settings tab pickers
-// and the label that names the registered trigger.
-func (a *App) syncHotkeyPickers() {
-	combo := a.hotkeyCombo()
-	a.HotkeyModsSel = hotkeyModsLabel(combo)
-	a.HotkeyKeySel = hotkeyKeyLabel(combo.Key)
-	a.HotkeyCurrent = comboToAccelerator(combo)
-}
-
-// applyHotkeyCombo stores the chord picked in the settings tab and lets
-// SaveSettings re-register it; a failed registration overwrites the success
-// Notice with its own message.
-func (a *App) applyHotkeyCombo() {
-	a.Mu.Lock()
-	combo := core.HotkeyCombo{Key: core.NormalizeHotkeyKey(a.HotkeyKeySel)}
-	for _, mods := range hotkeyModsOptions {
-		if mods.Label != a.HotkeyModsSel {
-			continue
-		}
-		combo.Ctrl, combo.Shift, combo.Alt, combo.Win = mods.Ctrl, mods.Shift, mods.Alt, mods.Win
-	}
-	switch {
-	case combo.IsValid():
-		a.settings.Hotkey.Combo = &combo
-		a.HotkeyCurrent = comboToAccelerator(combo)
-		a.Notice = "조합 단축키를 " + a.HotkeyCurrent + " 로 바꿨습니다."
-	default:
-		a.Notice = "단축키 조합이 유효하지 않아 바꾸지 않았습니다."
-	}
-	a.Mu.Unlock()
-	a.SaveSettings()
-}
-
 // SwapLanguages exchanges the source and target languages.
 func (a *App) SwapLanguages() {
 	a.Mu.Lock()
@@ -297,52 +261,6 @@ func (a *App) SwapLanguages() {
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.Mu.Unlock()
 	a.SaveSettings()
-}
-
-// hotkeyModsOption is one modifier choice of the settings tab pickers.
-type hotkeyModsOption struct {
-	Label                 string
-	Ctrl, Shift, Alt, Win bool
-}
-
-// hotkeyModsOptions are the modifier choices; every one has at least one
-// modifier so the stored chord stays registrable.
-var hotkeyModsOptions = []hotkeyModsOption{
-	{Label: "Ctrl", Ctrl: true},
-	{Label: "Ctrl + Shift", Ctrl: true, Shift: true},
-	{Label: "Ctrl + Alt", Ctrl: true, Alt: true},
-	{Label: "Ctrl + Shift + Alt", Ctrl: true, Shift: true, Alt: true},
-	{Label: "Ctrl + Win", Ctrl: true, Win: true},
-	{Label: "Alt", Alt: true},
-	{Label: "Alt + Shift", Shift: true, Alt: true},
-	{Label: "Alt + Win", Alt: true, Win: true},
-	{Label: "Shift + Win", Shift: true, Win: true},
-	{Label: "Win", Win: true},
-}
-
-// hotkeyModsLabel maps a chord onto its options label, defaulting to Ctrl.
-func hotkeyModsLabel(combo core.HotkeyCombo) string {
-	for _, mods := range hotkeyModsOptions {
-		if mods.Ctrl == combo.Ctrl && mods.Shift == combo.Shift &&
-			mods.Alt == combo.Alt && mods.Win == combo.Win {
-			return mods.Label
-		}
-	}
-	return hotkeyModsOptions[0].Label
-}
-
-// hotkeyKeyLabel renders a normalized stored key as an option label.
-func hotkeyKeyLabel(key string) string {
-	switch key := core.NormalizeHotkeyKey(key); key {
-	case "space":
-		return "Space"
-	case "tab":
-		return "Tab"
-	case "enter":
-		return "Enter"
-	default:
-		return strings.ToUpper(key)
-	}
 }
 
 // captureSelection copies the selected text of the focused application into
@@ -386,7 +304,7 @@ func (a *App) StartEngine() {
 	if config == nil {
 		a.Mu.Lock()
 		a.EngineState = core.EngineState{Kind: core.EngineFailed,
-			Detail: "사용할 모델이 없습니다. 모델 탭에서 먼저 내려받으세요."}
+			Detail: "사용할 수 있는 문구 없음"}
 		a.Mu.Unlock()
 		a.Invalidate()
 		return
@@ -780,6 +698,7 @@ func Run() {
 		hidden := startedAtLogin(a)
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Offline Translator",
+			Page:      mygo.PageOptions{DevTools: mygo.DevToolsDisabled},
 			Width:     920,
 			MinWidth:  700,
 			Height:    640,

@@ -47,7 +47,7 @@ mygo(Go 네이티브 UI 라이브러리)로 만든 데스크톱 번역기입니�
    ```
 
 2. **llama.cpp 런타임 준비**
-   [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases)에서 Windows용 zip을 받아 압축을 풀고, `llama-server.exe`와 같은 폴더의 DLL들을 `%LOCALAPPDATA%\HyMT\runtime\`에 넣습니다.
+   [llama.cpp Releases](https://github.com/ggml-org/llama.cpp/releases)에서 Windows용 zip을 받아 압축을 풀고, `llama-server.exe`와 같은 폴더의 DLL들을 `%LOCALAPPDATA%\offline-translator\runtime\`에 넣습니다.
    자동으로 받으려면:
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\setup-runtime.ps1 -Variant cpu
@@ -56,7 +56,7 @@ mygo(Go 네이티브 UI 라이브러리)로 만든 데스크톱 번역기입니�
 
 3. **모델 다운로드**
    앱 실행 → **모델** 탭 → `Hy-MT2-1.8B-Q4_K_M.gguf`(권장)의 **설치됨** 여부 확인, 없으면 내려받기. 다운로드가 끝나면 엔진을 시작합니다.
-   사내망 등으로 다운로드가 안 되면 `.gguf` 파일을 직접 `%LOCALAPPDATA%\HyMT\models\`에 넣으세요.
+   사내망 등으로 다운로드가 안 되면 `.gguf` 파일을 직접 `%LOCALAPPDATA%\offline-translator\models\`에 넣으세요.
 
 4. **번역**
    원문을 입력하고 **번역** 버튼을 누릅니다. 번역 탭의 글자 크기(`A−` / `A+`)로 양쪽 에디터 크기를 조절할 수 있습니다.
@@ -112,8 +112,10 @@ Zed	제드
 
 ## 저장 위치
 
-- 기본: `%LOCALAPPDATA%\HyMT\` (`settings.json`, `models\`, `runtime\`, `logs\`)
-- 포터블 모드: exe 옆에 `models` 폴더가 있으면 exe 폴더를 사용합니다.
+- 기본: `%LOCALAPPDATA%\offline-translator\` (`settings.json`, `models\`, `runtime\`, `logs\`)
+- 포터블 모드: exe 옆에 `portable.txt` 파일이나 `models` 폴더가 있으면 exe 폴더를 사용합니다.
+
+기존 `%LOCALAPPDATA%\HyMT\` 데이터는 자동으로 이동하거나 복사하지 않습니다. 기존 설정, 모델, 런타임을 계속 사용하려면 앱을 종료한 뒤 필요한 파일을 새 폴더에 직접 복사하세요.
 
 `settings.json`에는 언어 쌍, 생성 파라미터(기본값은 Tencent 권장값: temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05, max_tokens 4096), 프롬프트 옵션, 서버 옵션(ctx, threads, GPU layers, port), 트레이·자동 실행 옵션, 단축키 옵션, 에디터 글자 크기가 저장됩니다. 파일 레이아웃은 과거 버전과 호환됩니다.
 
@@ -121,8 +123,8 @@ Zed	제드
 
 | 증상 | 해결 |
 | --- | --- |
-| "사용할 모델이 없습니다." | 모델 탭에서 GGUF를 내려받거나 `%LOCALAPPDATA%\HyMT\models\`에 넣기 |
-| "llama-server를 찾을 수 없습니다" | `%LOCALAPPDATA%\HyMT\runtime\llama-server.exe` 존재 여부 확인, 또는 `scripts\setup-runtime.ps1` 실행 |
+| "사용할 수 있는 문구 없음" | 모델 탭에서 GGUF를 내려받거나 `%LOCALAPPDATA%\offline-translator\models\`에 넣기 |
+| "llama-server를 찾을 수 없습니다" | `%LOCALAPPDATA%\offline-translator\runtime\llama-server.exe` 존재 여부 확인, 또는 `scripts\setup-runtime.ps1` 실행 |
 | 포트 충돌 | `settings.json`의 `server.port`를 다른 값으로 변경 후 엔진 재시작 |
 | GPU를 쓰고 싶다 | 설정에서 GPU layers를 99(전부)나 -1(자동)로. CUDA/Vulkan 빌드의 llama-server 필요 |
 | 번역이 느림 | threads를 물리 코어 수에 맞추고, 1.8B Q4 모델 사용 |

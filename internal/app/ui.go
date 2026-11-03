@@ -18,45 +18,29 @@ func languageNames() []string {
 	return names
 }
 
-// hotkeyModsNames is the modifier-combination dropdown.
-func hotkeyModsNames() []string {
-	names := make([]string, len(hotkeyModsOptions))
-	for i, mods := range hotkeyModsOptions {
-		names[i] = mods.Label
-	}
-	return names
-}
-
-// hotkeyKeyNames is the key dropdown: every key the mygo backend reports
-// for hotkey registration.
-func hotkeyKeyNames() []string {
-	names := make([]string, 0, 64)
-	for c := byte('A'); c <= 'Z'; c++ {
-		names = append(names, string(rune(c)))
-	}
-	for c := byte('0'); c <= '9'; c++ {
-		names = append(names, string(rune(c)))
-	}
-	for i := 1; i <= 12; i++ {
-		names = append(names, fmt.Sprintf("F%d", i))
-	}
-	return append(names, "Space", "Tab", "Enter", ",", "-", ".", "=", ";", "/", "`", "[", "\\", "]", "'")
-}
-
 // appearanceNames is the appearance select option list.
 var appearanceNames = []string{"시스템", "라이트", "다크"}
 
 // promptLanguageNames is the instruction-language select option list.
 var promptLanguageNames = []string{"자동", "영어", "중국어"}
 
-// view is the root of the whole window: a tab row that carries the engine
-// state, the tab's surface and the transient notice at the bottom.
+// actionInset aligns the bottom-right actions across tabs.
+const actionInset = 12
+
+// view is the root of the whole window: a tab row and the active tab surface.
 func (a *App) view(c *ui.Context) {
 	a.noticeLock()
 	a.Mu.Lock()
 	tab := a.Tab
 	notice := a.Notice
+	a.Notice = ""
 	a.Mu.Unlock()
+	if strings.TrimSpace(notice) != "" {
+		c.Toast(notice)
+	}
+	if a.HotkeyRecording && tab != tabSettings {
+		a.cancelHotkeyRecording()
+	}
 
 	ui.Column(c).Fill().Children(func() {
 		a.navBar(c)
@@ -68,11 +52,6 @@ func (a *App) view(c *ui.Context) {
 		case tabSettings:
 			a.settingsView(c)
 		}
-		if strings.TrimSpace(notice) != "" {
-			ui.Row(c).Padding(6, 10).Children(func() {
-				ui.Text(c, notice).FontSize(11)
-			})
-		}
 	})
 }
 
@@ -81,11 +60,11 @@ func (a *App) navBar(c *ui.Context) {
 	ui.Row(c).PaddingX(10).Gap(8).AlignItems(ui.Center).Children(func() {
 		ui.Tabs(c, &a.Tab, "번역", "모델", "설정")
 		ui.Box(c).Grow(1) // Spacer pushing the engine state right.
-		if a.engineReady() {
-			ui.Text(c, "● 엔진 준비됨").FontSize(11)
-		} else {
-			ui.Text(c, "○ "+a.EngineLabel()).FontSize(11)
-		}
+		state := a.engineStateView()
+		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "●").FontSize(11).TextColor(engineStatusColor(state.Kind, c.Theme()))
+			ui.Text(c, a.EngineLabel()).FontSize(11)
+		})
 		if a.isStreaming() {
 			ui.Spinner(c)
 			ui.Text(c, "번역 중").FontSize(11)
@@ -97,10 +76,18 @@ func (a *App) navBar(c *ui.Context) {
 	})
 }
 
-func (a *App) engineReady() bool {
-	a.Mu.Lock()
-	defer a.Mu.Unlock()
-	return a.EngineState.IsReady()
+// engineStatusColor uses theme colors so the indicator remains legible in both themes.
+func engineStatusColor(kind core.EngineStateKind, theme *ui.Theme) ui.Color {
+	switch kind {
+	case core.EngineReady:
+		return theme.Success
+	case core.EngineStarting:
+		return theme.Warning
+	case core.EngineFailed:
+		return theme.Danger
+	default:
+		return theme.TextMuted
+	}
 }
 
 func (a *App) isStreaming() bool {
@@ -125,7 +112,7 @@ func (a *App) progress() core.DownloadProgress {
 // text size on one bar, the source and translation editors side by side,
 // and the action row.
 func (a *App) translateView(c *ui.Context) {
-	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
+	ui.Column(c).Fill().Padding(actionInset).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Select(c, &a.SourceSelName, languageNames()).Width(150).OnChange(a.syncLanguageSelects)
 			if ui.Button(c, "→").Clicked() {
@@ -180,60 +167,81 @@ func (a *App) translateView(c *ui.Context) {
 	})
 }
 
-// modelsView lists the catalog, local files and the engine controls.
+// modelsView groups the engine controls and downloadable models in a scrollable page.
 func (a *App) modelsView(c *ui.Context) {
-	ui.Column(c).Fill().Padding(12).Gap(6).Children(func() {
-		ui.Text(c, core.ModelFamily+" GGUF 공식 카탈로그").Bold()
+	theme := c.Theme()
+	ui.Scroll(c).Fill().Padding(16).Gap(12).Children(func() {
+		ui.Column(c).Gap(4).Children(func() {
+			ui.Text(c, "모델 관리").FontSize(18).Bold()
+		})
+
+		state := a.engineStateView()
+		ui.Column(c).Padding(12).Gap(8).Radius(8).Border(1, theme.Border).Background(theme.Surface).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "번역 엔진").Bold()
+				ui.Text(c, state.Label()).FontSize(11).TextColor(theme.TextMuted)
+				ui.Box(c).Grow(1)
+				if state.IsReady() || state.IsBusy() {
+					if ui.Button(c, "엔진 중지").Clicked() {
+						a.StopEngine()
+					}
+				} else if ui.PrimaryButton(c, "엔진 시작").Clicked() {
+					a.StartEngine()
+				}
+			})
+			model := a.selectedModelShort()
+			if model == "" {
+				model = "선택된 모델 없음"
+			}
+			ui.Text(c, "현재 모델 · "+model).FontSize(11).TextColor(theme.TextMuted)
+			if detail, ok := a.engineFailure(); ok {
+				ui.Text(c, detail).FontSize(11).TextColor(theme.Danger)
+			}
+			if tail := a.engineLogTail(); tail != "" {
+				ui.Text(c, "서버 로그").FontSize(11).Bold()
+				log := tail
+				ui.TextArea(c, &log).Height(100)
+			}
+		})
+
+		ui.Column(c).Gap(4).Children(func() {
+			ui.Text(c, "공식 모델 카탈로그").Bold()
+			ui.Text(c, "Tencent Hy-MT2 GGUF · 모델 크기와 권장 사양을 확인하세요.").FontSize(11).TextColor(theme.TextMuted)
+		})
 		for _, option := range core.Catalog {
 			installed := a.installedOption(option)
 			a.Mu.Lock()
 			downloading := a.DownloadID == option.ID
 			a.Mu.Unlock()
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Column(c).Width(330).Children(func() {
-					ui.Text(c, fmt.Sprintf("%s · %s", option.Family, option.File)).FontSize(11)
+			ui.Column(c.Key(option.ID)).Padding(12).Gap(6).Radius(8).Border(1, theme.Border).Children(func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, option.FileName()).FontSize(12).Bold().Grow(1).MinWidth(0)
+					if option.Recommended {
+						ui.Text(c, "권장").FontSize(11).TextColor(theme.Accent)
+					}
+					ui.Text(c, option.SizeLabel()).FontSize(11).TextColor(theme.TextMuted)
+					switch {
+					case downloading:
+						if ui.Button(c, "취소").Clicked() {
+							a.CancelDownload()
+						}
+					case installed:
+						ui.Text(c, "설치됨").FontSize(11).TextColor(theme.Success)
+					case a.isDownloading():
+						ui.Text(c, "대기 중").FontSize(11).TextColor(theme.TextMuted)
+					default:
+						if ui.Button(c, "내려받기").Clicked() {
+							a.StartDownload(option)
+						}
+					}
 				})
-				switch {
-				case downloading:
+				ui.Text(c, option.Note).FontSize(11).TextColor(theme.TextMuted)
+				if downloading {
 					progress := a.progress()
-					ui.Progress(c, progress.Fraction()).Width(180)
-					ui.Text(c, progress.Label()).FontSize(10)
-					if ui.Button(c, "취소").Clicked() {
-						a.CancelDownload()
-					}
-				case installed:
-					ui.Text(c, "설치됨 · "+option.SizeLabel()).FontSize(11)
-				case a.isDownloading():
-					ui.Text(c, "다른 파일 내려받는 중…").FontSize(11)
-				default:
-					ui.Text(c, option.SizeLabel()).FontSize(11)
-					if ui.Button(c, "내려받기").Clicked() {
-						a.StartDownload(option)
-					}
+					ui.Progress(c, progress.Fraction()).FillWidth()
+					ui.Text(c, progress.Label()).FontSize(11).TextColor(theme.TextMuted)
 				}
 			})
-		}
-
-		state := a.engineStateView()
-		ui.Text(c, "엔진 (llama.cpp server)").Bold()
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			if state.IsReady() || state.IsBusy() {
-				if ui.Button(c, "엔진 중지").Clicked() {
-					a.StopEngine()
-				}
-			} else if ui.PrimaryButton(c, "엔진 시작").Clicked() {
-				a.StartEngine()
-			}
-			if model := a.selectedModelShort(); model != "" {
-				ui.Text(c, "모델: "+model).FontSize(11)
-			}
-		})
-		if detail, ok := a.engineFailure(); ok {
-			ui.Text(c, detail).FontSize(10)
-		}
-		if tail := a.engineLogTail(); tail != "" {
-			log := tail
-			ui.TextArea(c, &log).Height(120)
 		}
 	})
 }
@@ -252,54 +260,75 @@ func (a *App) settingsView(c *ui.Context) {
 	useGlossary := &a.settings.Prompt.UseGlossary
 	glossary := &a.settings.Prompt.Glossary
 	style := &a.settings.Prompt.Style
-	promptLang := promptLanguageName(a.settings.Prompt.Language)
-	promptLangSel := promptLang
 	a.Mu.Unlock()
 
-	ui.Column(c).Fill().Padding(12).Gap(8).Children(func() {
-		ui.Text(c, "일반").Bold()
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "테마").FontSize(12)
-			ui.Select(c, &a.AppearanceSel, appearanceNames).Width(160)
-		})
-		ui.Checkbox(c, keepInTray, "창을 닫아도 트레이에 유지")
-		ui.Checkbox(c, startWithWindows, "Windows 시작 시 자동 실행")
-
-		ui.Text(c, "프롬프트").Bold()
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "지시문 언어").FontSize(12)
-			ui.Select(c, &promptLangSel, promptLanguageNames).Width(160)
-		})
-		ui.Checkbox(c, delimiters, "구분자(코드 등) 원형 보존 강제")
-		ui.Checkbox(c, useGlossary, "용어집 사용")
-		if *useGlossary {
-			ui.Text(c, "용어집 (한 줄에 하나씩, `원문 => 번역`)").FontSize(11)
-			ui.TextArea(c, glossary).Height(110)
-			ui.Text(c, "스타일 지시문 (선택)").FontSize(11)
-			ui.TextArea(c, style).Height(60)
-		}
-
-		ui.Text(c, "글로벌 단축키").Bold()
-		ui.Checkbox(c, hotkeyEnabled, "선택한 텍스트를 자동 번역 (기본 Ctrl+Shift+C)")
-		if *hotkeyEnabled {
-			ui.Text(c, "다른 앱에서 텍스트를 선택하고 단축키를 누르면 이 창의 원문에 넣어 바로 번역합니다. 더블탭 트리거는 설정 호환성을 위해 값만 유지됩니다.").FontSize(10)
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, fmt.Sprintf("조합 (%s)", a.HotkeyCurrent)).FontSize(12)
-				ui.Select(c, &a.HotkeyModsSel, hotkeyModsNames()).Width(170)
-				ui.Select(c, &a.HotkeyKeySel, hotkeyKeyNames()).Width(90)
-				if ui.Button(c, "적용").Clicked() {
-					a.applyHotkeyCombo()
+	theme := c.Theme()
+	ui.Column(c).Fill().Children(func() {
+		ui.Scroll(c).Grow(1).Padding(16).Gap(12).Children(func() {
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "설정").FontSize(18).Bold()
+			})
+			ui.Column(c).Padding(14).Gap(10).Radius(8).Border(1, theme.Border).Background(theme.Surface).Children(func() {
+				ui.Text(c, "화면 및 시작").Bold()
+				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "테마").FontSize(12)
+					ui.Select(c, &a.AppearanceSel, appearanceNames).Width(160)
+				})
+				ui.Checkbox(c, keepInTray, "창을 닫아도 트레이에 유지")
+				ui.Checkbox(c, startWithWindows, "Windows 시작 시 자동 실행")
+			})
+			ui.Column(c).Padding(14).Gap(10).Radius(8).Border(1, theme.Border).Background(theme.Surface).Children(func() {
+				ui.Text(c, "번역 지시문").Bold()
+				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "지시문 언어").FontSize(12)
+					ui.Select(c, &a.PromptLanguageSel, promptLanguageNames).Width(160)
+				})
+				ui.Checkbox(c, delimiters, "구분자(코드 등) 원형 보존 강제")
+				ui.Checkbox(c, useGlossary, "용어집 사용")
+				if *useGlossary {
+					ui.Text(c, "용어집 · 한 줄에 원문 => 번역 하나씩 입력").FontSize(11).TextColor(theme.TextMuted)
+					ui.TextArea(c, glossary).Height(110)
+					ui.Text(c, "스타일 지시문 (선택)").FontSize(11).TextColor(theme.TextMuted)
+					ui.TextArea(c, style).Height(60)
 				}
 			})
-		}
-
-		if ui.PrimaryButton(c, "설정 저장").Clicked() {
-			a.applyAppearance(a.AppearanceSel)
-			a.Mu.Lock()
-			a.settings.Prompt.Language = promptLanguageOf(promptLangSel)
-			a.Mu.Unlock()
-			a.SaveSettings()
-		}
+			ui.Column(c).Padding(14).Gap(10).Radius(8).Border(1, theme.Border).Background(theme.Surface).Children(func() {
+				ui.Text(c, "글로벌 단축키").Bold()
+				ui.Checkbox(c, hotkeyEnabled, "선택한 텍스트를 자동 번역")
+				if *hotkeyEnabled {
+					label := comboToAccelerator(a.hotkeyCombo())
+					if a.HotkeyRecording {
+						label = "단축키를 눌러 주세요 · Esc 취소"
+					}
+					button := ui.Button(c, label).HandleInput(a.recordHotkeyInput)
+					if a.HotkeyRecording {
+						button.AutoFocus()
+					}
+					if button.Clicked() {
+						if a.HotkeyRecording {
+							a.cancelHotkeyRecording()
+						} else {
+							a.startHotkeyRecording()
+						}
+					}
+				} else if a.HotkeyRecording {
+					a.cancelHotkeyRecording()
+				}
+			})
+		})
+		ui.Row(c).Padding(actionInset).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Grow(1)
+			if ui.PrimaryButton(c, "설정 저장").Clicked() {
+				if a.HotkeyRecording {
+					a.HotkeyRecording = false
+				}
+				a.applyAppearance(a.AppearanceSel)
+				a.Mu.Lock()
+				a.settings.Prompt.Language = promptLanguageOf(a.PromptLanguageSel)
+				a.Mu.Unlock()
+				a.SaveSettings()
+			}
+		})
 	})
 }
 
