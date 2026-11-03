@@ -205,7 +205,7 @@ jobs:
         with:
           body: |
             - Windows 11용 오프라인 번역 앱 제공 (설치 마법사 실행 파일과 휴대용 ZIP)
-            - 원문·번역 공통 글자 크기 조절 및 단축키 지원
+            - 전역 단축키 신규 지원: 다른 앱의 선택 텍스트를 즉시 번역 (조합 `Ctrl+Shift+C`, 두 번 누르기 `Ctrl+C C` — 설정 → 단축키에서 켬)
             - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
           files: |
             dist/*.zip

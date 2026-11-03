@@ -2802,7 +2802,7 @@ dependencies = [
 
 [[package]]
 name = "hymt-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gpui-kit",
  "hymt-core",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "hymt-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
