@@ -7,7 +7,7 @@
 package core
 
 // Version is shown in the UI and written to logs.
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 // ModelFamily names the models this application is built for.
 const ModelFamily = "Tencent Hy-MT2"
