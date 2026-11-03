@@ -74,7 +74,13 @@ func New() *App {
 	a.paths = core.DetectPaths()
 	_ = a.paths.Ensure()
 	a.settings, a.Notice = core.LoadOrDefault(a.paths.SettingsFile())
-	a.SourceSelName = languageName(a.settings.SourceLang)
+	// AutoSource keeps the source select on 자동 across restarts; its stored
+	// concrete language stays as the detect-failure fallback.
+	if a.settings.AutoSource {
+		a.SourceSelName = autoSourceLabel
+	} else {
+		a.SourceSelName = languageName(a.settings.SourceLang)
+	}
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.AppearanceSel = appearanceName(a.settings.Appearance)
 	a.PromptLanguageSel = promptLanguageName(a.settings.Prompt.Language)
@@ -133,12 +139,16 @@ func appearanceName(a core.Appearance) string {
 	}
 }
 
-// syncLanguageSelects copies the select names back into the settings.
+// syncLanguageSelects copies the select names back into the settings. The
+// 자동 entry only flips AutoSource: the stored source language stays as the
+// detect-failure fallback.
 func (a *App) syncLanguageSelects() {
 	a.Mu.Lock()
-	source := languageCodeByName(a.SourceSelName)
 	target := languageCodeByName(a.TargetSelName)
-	if source != "" {
+	if a.SourceSelName == autoSourceLabel {
+		a.settings.AutoSource = true
+	} else if source := languageCodeByName(a.SourceSelName); source != "" {
+		a.settings.AutoSource = false
 		a.settings.SourceLang = source
 	}
 	if target != "" && target != a.settings.SourceLang {
@@ -258,7 +268,8 @@ func (a *App) hotkeyCombo() core.HotkeyCombo {
 
 // SwapLanguages exchanges the source and target languages. With the source
 // select on 자동 the direction is resolved from the source text first, since
-// auto cannot move to the target side.
+// auto cannot move to the target side: the resolved pair becomes the newly
+// stored manual selection.
 func (a *App) SwapLanguages() {
 	a.Mu.Lock()
 	sourceCode := a.settings.SourceLang
@@ -266,6 +277,7 @@ func (a *App) SwapLanguages() {
 		if lang, ok := core.Detect(a.SourceText); ok {
 			sourceCode = lang.Code
 		}
+		a.settings.AutoSource = false
 	}
 	a.settings.SourceLang, a.settings.TargetLang = a.settings.TargetLang, sourceCode
 	a.SourceSelName = languageName(a.settings.SourceLang)

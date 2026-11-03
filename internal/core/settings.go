@@ -257,8 +257,13 @@ const (
 
 // Settings is everything the application persists.
 type Settings struct {
-	SourceLang   string             `json:"source_lang"`
-	TargetLang   string             `json:"target_lang"`
+	SourceLang string `json:"source_lang"`
+	TargetLang string `json:"target_lang"`
+	// AutoSource marks the source select as sitting on the detect-language
+	// entry. The stored source language stays as the fallback used when the
+	// text is undetectable. Files from before this field keep the manual
+	// selection.
+	AutoSource   bool               `json:"auto_source"`
 	DownloadBase string             `json:"download_base"`
 	Appearance   Appearance         `json:"appearance"`
 	Server       ServerSettings     `json:"server"`
@@ -335,6 +340,9 @@ func (s Settings) Sanitized() Settings {
 	} else {
 		san.TargetLang = s.TargetLang
 	}
+
+	// AutoSource is a plain user preference; a bool cannot be out of range.
+	san.AutoSource = s.AutoSource
 
 	base := strings.TrimSuffix(strings.TrimSpace(s.DownloadBase), "/")
 	if !(strings.HasPrefix(base, "http://") || strings.HasPrefix(base, "https://")) || len(base) > 200 {

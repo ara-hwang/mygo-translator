@@ -118,7 +118,7 @@ Zed	제드
 
 기존 `%LOCALAPPDATA%\HyMT\` 데이터는 자동으로 이동하거나 복사하지 않습니다. 기존 설정, 모델, 런타임을 계속 사용하려면 앱을 종료한 뒤 필요한 파일을 새 폴더에 직접 복사하세요.
 
-`settings.json`에는 언어 쌍, 생성 파라미터(기본값은 Tencent 권장값: temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05, max_tokens 4096), 프롬프트 옵션, 서버 옵션(ctx, threads, GPU layers, port), 트레이·자동 실행 옵션, 단축키 옵션, 에디터 글자 크기가 저장됩니다. 파일 레이아웃은 과거 버전과 호환됩니다.
+`settings.json`에는 언어 쌍(출발 언어 자동 감지 상태 포함), 생성 파라미터(기본값은 Tencent 권장값: temperature 0.7, top_p 0.6, top_k 20, repetition_penalty 1.05, max_tokens 4096), 프롬프트 옵션, 서버 옵션(ctx, threads, GPU layers, port), 트레이·자동 실행 옵션, 단축키 옵션, 에디터 글자 크기가 저장됩니다. 파일 레이아웃은 과거 버전과 호환됩니다.
 
 ## 문제 해결
 
