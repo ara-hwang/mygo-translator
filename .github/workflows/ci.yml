@@ -108,7 +108,7 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: |
             ${{ steps.package.outputs.zip }}
-            dist/*.exe
+            dist/*-setup.exe
 
   # Keep the existing required check name, including for documentation-only PRs.
   build:
@@ -145,6 +145,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Re-running a release keeps old assets (e.g. files renamed between runs),
+      # since the upload action only replaces assets with the same name. Clear
+      # the asset list first so a re-release always ends with exactly the files
+      # built here.
+      - name: Remove stale release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null) || exit 0
+          while IFS= read -r asset; do
+            gh release delete-asset "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+          done <<< "$assets"
+
       - uses: softprops/action-gh-release@v3
         with:
           body: |
@@ -155,5 +168,5 @@ jobs:
             - llama.cpp 런타임과 모델 별도 설치 필요, README 안내 참고
           files: |
             dist/*.zip
-            dist/*.exe
+            dist/*-setup.exe
           fail_on_unmatched_files: true
