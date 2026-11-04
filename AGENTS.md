@@ -14,6 +14,10 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe
 
 - llama.cpp 런타임 내려받기: `powershell -ExecutionPolicy Bypass -File scripts\setup-runtime.ps1 -Variant cpu|cuda|vulkan`
 - Go 1.27+이면 별도의 빌드 도구 설치가 필요 없다.
+- exe 아이콘은 저장소 커밋된 `rsrc_windows_amd64.syso`가 `go build` 시 자동으로 링크된다. `resources/icon.ico`를 바꾸면 다음 명령으로 `.syso`를 다시 만들어 커밋한다:
+  ```powershell
+  go tool rsrc -arch amd64 -ico resources/icon.ico -o rsrc_windows_amd64.syso
+  ```
 - 윈도우에서 UI를 검증할 때는 release 빌드를 실행해 화면을 직접 확인한다.
 - PATH에 llama-server가 있으면 코어의 서버 탐색 테스트(`DiscoverServer`)가 PATH를 탐색해 실패한다. PATH를 정리한 뒤 돌린다.
 
