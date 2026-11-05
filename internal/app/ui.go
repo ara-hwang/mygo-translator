@@ -38,6 +38,8 @@ var promptLanguageNames = []string{"자동", "영어", "중국어"}
 // actionInset aligns the bottom-right actions across tabs.
 const actionInset = 12
 
+const autoModelLabel = "자동 선택 (권장 모델 우선)"
+
 // appFontFamily is the family of the embedded Pretendard Variable the
 // whole frame takes.
 const appFontFamily = "Pretendard Variable"
@@ -223,6 +225,22 @@ func (a *App) modelsView(c *ui.Context) {
 				model = "선택된 모델 없음"
 			}
 			ui.Text(c, "현재 모델 · "+model).FontSize(11).TextColor(theme.TextMuted)
+			a.Mu.Lock()
+			options := append([]string{autoModelLabel}, a.ModelFiles...)
+			a.Mu.Unlock()
+			if a.ModelSel != autoModelLabel && !containsModel(options, a.ModelSel) {
+				options = append(options, a.ModelSel)
+			}
+			ui.Select(c, &a.ModelSel, options).Label("사용할 모델").FillWidth()
+			ui.Text(c, "엔진을 중지한 뒤 모델을 적용하세요. 자동 선택은 models 폴더를 사용합니다.").FontSize(11).TextColor(theme.TextMuted)
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c, "목록 새로고침").Clicked() {
+					a.refreshLocalModels()
+				}
+				if ui.Button(c, "모델 적용").Disabled(state.IsReady() || state.IsBusy() || a.isStreaming()).Clicked() {
+					a.applyModelSelection()
+				}
+			})
 			if detail, ok := a.engineFailure(); ok {
 				ui.Text(c, detail).FontSize(11).TextColor(theme.Danger)
 			}
@@ -297,6 +315,7 @@ func (a *App) settingsView(c *ui.Context) {
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "설정").FontSize(18).Bold()
 			})
+			a.engineSettingsView(c)
 			ui.Column(c).Padding(14).Gap(10).Radius(8).Border(1, theme.Border).Background(theme.Surface).Children(func() {
 				ui.Text(c, "화면 및 시작").Bold()
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
