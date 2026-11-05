@@ -41,6 +41,8 @@ type App struct {
 	history             []core.HistoryEntry
 	historyFailed       bool
 	HistoryRetentionSel string
+	ServerForm          core.ServerForm
+	ModelSel            string
 
 	Mu                sync.Mutex
 	Tab               int
@@ -97,6 +99,11 @@ func New() *App {
 	a.TargetSelName = languageName(a.settings.TargetLang)
 	a.AppearanceSel = appearanceName(a.settings.Appearance)
 	a.PromptLanguageSel = promptLanguageName(a.settings.Prompt.Language)
+	a.ServerForm = core.NewServerForm(a.settings.Server)
+	a.ModelSel = deref(a.settings.Server.ModelPath)
+	if a.ModelSel == "" {
+		a.ModelSel = autoModelLabel
+	}
 	return a
 }
 
