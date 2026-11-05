@@ -46,7 +46,15 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe
 
 - 코어 로직은 `internal/core`의 `_test.go` 인라인 테스트로 고정한다. 특히 `prompt.go` 수정은 모델 카드 원문과 일치하는지 테스트로 검증.
 - OS 종속 로직(`internal/winapi`, 트레이)은 자동화 범위 밖. Windows에서 설정 탭 단축키 스위치 등으로 직접 확인하고, 동작 확인 여부를 결과에 명시한다.
-- UI(`internal/app`)는 Windows에서만 실행 검증 가능. `go build` 성공만으로 끝내지 말고 동작 확인 여부를 명시.
+- UI(`internal/app`)는 Linux에서도 네이티브 실행해 검증한다. Linux 작업 환경에서는 아래 절차로 직접 확인하고, Windows 전용 동작의 검증 여부는 별도로 명시한다.
+
+### Linux UI 및 실제 모델 검증
+
+1. `go build -o /tmp/opencode/offline-translator-ui .`로 네이티브 앱을 빌드한다. 기존 디스플레이가 없으면 `Xvfb :99 -screen 0 1280x900x24 -ac`를 별도 프로세스로 실행한다. 완료 기준: 빌드 성공 및 디스플레이 연결 가능.
+2. `DISPLAY=:99 LOCALAPPDATA=/tmp/opencode/offline-translator-ui-data /tmp/opencode/offline-translator-ui`로 테스트 데이터를 분리한다. 기존 디스플레이를 사용한다면 해당 `DISPLAY` 값을 유지한다. 바이너리 옆의 `portable.txt`나 `models/`가 있으면 포터블 모드가 우선하므로, 그런 파일이 없는 위치에서 실행한다. 화면 확인과 조작 도구는 전역 규칙을 따른다. 완료 기준: 앱 창 표시 및 테스트 경로 사용 확인.
+3. 기본 창 크기에서 변경한 화면의 표시, 클릭, 입력, 설정 저장 및 재실행 후 복원을 검증한다. 히스토리 변경은 기본 꺼짐, 7일/30일/무제한, 기록 다시 열기, 전체 삭제, 비활성화 시 미저장을 확인한다. 완료 기준: 해당 동작의 화면과 저장 파일이 일치함.
+4. 실제 모델 검증에는 공식 llama.cpp Linux 런타임과 카탈로그의 Tencent GGUF를 사용한다. 테스트 설정의 `server.runtime_path`와 테스트 데이터의 `models/`를 사용하고, 기존 테스트 서버는 종료해 포트 충돌과 모의 응답을 배제한다. 앱이 서버를 시작해 `/health`가 준비 상태가 되면 UI에서 번역한다. 완료 기준: 번역문 표시, 실제 llama-server 추론 로그, 히스토리 저장 및 재실행 후 다시 열기 확인.
+5. 결과에 사용한 모델과 런타임, 실제 번역 예시, 확인한 UI 동작과 미검증 범위를 명시한다. 모의 서버 검증은 실제 모델 검증과 구분한다. 테스트 후 자신이 시작한 앱과 서버만 종료하고, 모델 및 스크린샷은 Git에 추가하지 않는다.
 
 ## 플랫폼
 
