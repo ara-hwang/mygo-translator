@@ -76,6 +76,8 @@ func (a *App) view(c *ui.Context) {
 			a.modelsView(c)
 		case tabSettings:
 			a.settingsView(c)
+		case tabHistory:
+			a.historyView(c)
 		}
 	})
 }
@@ -83,7 +85,7 @@ func (a *App) view(c *ui.Context) {
 // navBar puts the engine state at the right end of the tab row.
 func (a *App) navBar(c *ui.Context) {
 	ui.Row(c).PaddingX(10).Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Tabs(c, &a.Tab, "번역", "모델", "설정")
+		ui.Tabs(c, &a.Tab, "번역", "모델", "설정", "히스토리")
 		ui.Box(c).Grow(1) // Spacer pushing the engine state right.
 		state := a.engineStateView()
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
@@ -340,6 +342,12 @@ func (a *App) settingsView(c *ui.Context) {
 					a.cancelHotkeyRecording()
 				}
 			})
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "번역 히스토리").Bold()
+				ui.Checkbox(c, &a.settings.History.Enabled, "완료된 번역을 이 컴퓨터에 저장")
+				ui.Select(c, &a.HistoryRetentionSel, []string{"최근 7일", "최근 30일", "무제한"}).Width(160)
+				ui.Text(c, "보관 기간이 지난 기록은 앱 실행·조회·저장 시 삭제됩니다. 저장을 꺼도 기존 기록은 유지됩니다.").FontSize(11)
+			})
 		})
 		ui.Row(c).Padding(actionInset).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Grow(1)
@@ -350,6 +358,17 @@ func (a *App) settingsView(c *ui.Context) {
 				a.applyAppearance(a.AppearanceSel)
 				a.Mu.Lock()
 				a.settings.Prompt.Language = promptLanguageOf(a.PromptLanguageSel)
+				switch a.HistoryRetentionSel {
+				case "무제한":
+					a.settings.History.RetentionDays = 0
+				case "최근 30일":
+					a.settings.History.RetentionDays = 30
+				default:
+					a.settings.History.RetentionDays = 7
+				}
+				if !a.historyFailed {
+					a.pruneHistoryLocked()
+				}
 				a.Mu.Unlock()
 				a.SaveSettings()
 			}

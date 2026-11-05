@@ -27,6 +27,7 @@ const (
 	tabTranslate = 0
 	tabModels    = 1
 	tabSettings  = 2
+	tabHistory   = 3
 )
 
 // autoSourceLabel is the source select's detect-language entry.
@@ -35,8 +36,11 @@ const autoSourceLabel = "자동"
 // App is the shared state the UI reads and mutates. Fields written from
 // goroutines are guarded by Mu; the view runs on the main thread.
 type App struct {
-	paths    core.AppPaths
-	settings core.Settings
+	paths               core.AppPaths
+	settings            core.Settings
+	history             []core.HistoryEntry
+	historyFailed       bool
+	HistoryRetentionSel string
 
 	Mu                sync.Mutex
 	Tab               int
@@ -74,6 +78,15 @@ func New() *App {
 	a.paths = core.DetectPaths()
 	_ = a.paths.Ensure()
 	a.settings, a.Notice = core.LoadOrDefault(a.paths.SettingsFile())
+	var historyErr error
+	a.history, historyErr = core.LoadHistory(a.historyPath())
+	if historyErr != nil {
+		a.historyFailed = true
+		a.Notice = fmt.Sprintf("히스토리를 읽지 못했습니다: %v", historyErr)
+	} else {
+		a.pruneHistoryLocked()
+	}
+	a.HistoryRetentionSel = historyRetentionName(a.settings.History.RetentionDays)
 	// AutoSource keeps the source select on 자동 across restarts; its stored
 	// concrete language stays as the detect-failure fallback.
 	if a.settings.AutoSource {
@@ -623,6 +636,10 @@ func (a *App) StartTranslate() {
 			}
 		} else if result != nil {
 			a.OutputText = result.Text
+			if settings.History.Enabled && a.settings.History.Enabled && strings.TrimSpace(result.Text) != "" && !a.historyFailed {
+				a.history = append([]core.HistoryEntry{{CreatedAt: time.Now(), SourceLang: settings.SourceLang, TargetLang: targetCode, Source: source, Translation: result.Text}}, a.history...)
+				a.saveHistoryLocked()
+			}
 			speed := ""
 			if result.TokensPerSecond > 0 {
 				speed = fmt.Sprintf(" · %.1f tok/s", result.TokensPerSecond)

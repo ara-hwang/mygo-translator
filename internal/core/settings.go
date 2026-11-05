@@ -257,8 +257,9 @@ const (
 
 // Settings is everything the application persists.
 type Settings struct {
-	SourceLang string `json:"source_lang"`
-	TargetLang string `json:"target_lang"`
+	History    HistorySettings `json:"history"`
+	SourceLang string          `json:"source_lang"`
+	TargetLang string          `json:"target_lang"`
 	// AutoSource marks the source select as sitting on the detect-language
 	// entry. The stored source language stays as the fallback used when the
 	// text is undetectable. Files from before this field keep the manual
@@ -315,6 +316,7 @@ func DefaultSettings() Settings {
 		Prompt:       PromptSettings{}, // zero value of Language is PromptAuto
 		Desktop:      DesktopSettings{},
 		Hotkey:       DefaultHotkeySettings(),
+		History:      HistorySettings{RetentionDays: 7},
 		TextSize:     FlexInt(TextSizeDefault),
 	}
 }
@@ -394,6 +396,7 @@ func (s Settings) Sanitized() Settings {
 	san.Prompt.PreserveDelimiters = s.Prompt.PreserveDelimiters
 	san.Prompt.Language = s.Prompt.Language
 	san.Desktop = s.Desktop
+	san.History = s.History.Sanitized()
 	return san
 }
 
