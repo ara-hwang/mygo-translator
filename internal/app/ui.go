@@ -69,16 +69,18 @@ func (a *App) view(c *ui.Context) {
 
 	ui.Column(c).Fill().Children(func() {
 		a.navBar(c)
-		switch tab {
-		case tabTranslate:
-			a.translateView(c)
-		case tabModels:
-			a.modelsView(c)
-		case tabSettings:
-			a.settingsView(c)
-		case tabHistory:
-			a.historyView(c)
-		}
+		ui.Box(c).Grow(1).MinHeight(0).Children(func() {
+			switch tab {
+			case tabTranslate:
+				a.translateView(c)
+			case tabModels:
+				a.modelsView(c)
+			case tabSettings:
+				a.settingsView(c)
+			case tabHistory:
+				a.historyView(c)
+			}
+		})
 	})
 }
 
@@ -291,7 +293,7 @@ func (a *App) settingsView(c *ui.Context) {
 
 	theme := c.Theme()
 	ui.Column(c).Fill().Children(func() {
-		ui.Scroll(c).Grow(1).Padding(16).Gap(12).Children(func() {
+		ui.Scroll(c).Grow(1).MinHeight(0).Padding(16).Gap(12).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				ui.Text(c, "설정").FontSize(18).Bold()
 			})
