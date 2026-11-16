@@ -362,10 +362,10 @@ func (s Settings) Sanitized() Settings {
 
 	// Numbers: defaults arrived from the pre-filled load; sanitize clamps.
 	server := s.Server
-	server.Port = clampInt(server.Port, 1024, 65535)
-	server.CtxSize = clampInt(server.CtxSize, 512, 32768)
-	server.Threads = clampInt(server.Threads, 1, 64)
-	server.GPULayers = clampInt(server.GPULayers, -1, 256)
+	server.Port = clampInt(server.Port, serverPortMin, serverPortMax)
+	server.CtxSize = clampInt(server.CtxSize, serverCtxSizeMin, serverCtxSizeMax)
+	server.Threads = clampInt(server.Threads, serverThreadsMin, serverThreadsMax)
+	server.GPULayers = clampInt(server.GPULayers, serverGPULayersMin, serverGPULayersMax)
 	san.Server = server
 
 	gen := s.Generation
