@@ -26,14 +26,15 @@ go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\offline-translator.exe
 바이너리는 `offline-translator.exe`(Windows GUI 서브시스템). UI는 [mygo](https://github.com/egoist/mygo) 네이티브 위젯을 쓴다.
 
 - `internal/core` — 플랫폼 독립 코어. **의존성은 Go 표준 라이브러리 + `golang.org/x/sys`만 허용.** UI·mygo 종속 코드를 넣지 않는다. 프롬프트 구성, 스트림 파싱, 프로세스 감독, 설정 검증 등 판단이 필요한 로직은 전부 여기에 두고 테스트한다.
-  - `prompt.go` — Tencent Hy-MT2 모델 카드의 **공식 프롬프트 템플릿 4종**(기본/용어집/스타일/구분자). 임의로 바꾸지 않는다. 중국어 대상 언어는 중국어 템플릿 자동 선택.
+  - `prompt.go` — Tencent Hy-MT2 모델 카드의 **공식 프롬프트 템플릿 4종**(기본/용어집/스타일/구분자). 임의로 바꾸지 않는다. 중국어 대상 언어는 중국어 템플릿 자동 선택. `prompt_settings.go`는 설정에서 모드 우선순위·언어·타깃 폴백을 결정한다.
   - `server.go` — OpenAI 호환 스트리밍 번역 클라이언트, `/health` 대기
-  - `engine.go` — llama-server 탐색·실행 인자·프로세스 감독. `engine_windows.go` / `engine_other.go` — 빌드 태그 분기
-  - `settings.go` — 설정 검증·원자적 저장. `paths.go` — 설치/포터블 경로 해석. 하드코딩 경로 금지, 둘을 경유.
+  - `engine.go` — llama-server 탐색·실행 인자·프로세스 감독. `engine_log.go` — 최근 로그 버퍼·오류 요약. `engine_windows.go` / `engine_other.go` — 빌드 태그 분기
+  - `settings.go` — 설정 검증·원자적 저장. `server_limits.go` — 설정 보정·편집 폼의 공통 서버 숫자 범위(보정/거부 정책은 각 호출부 유지). `paths.go` — 설치/포터블 경로 해석. 하드코딩 경로 금지, 둘을 경유.
   - `models.go` — Tencent 공식 GGUF 카탈로그·다운로드
   - `lang.go`, `glossary.go`, `normalize.go` — 언어표·용어집 파서·출력 정규화
 - `internal/app` — mygo UI(`app.Run`). 화면은 표시와 이벤트만 담당하고 판단 로직은 코어에 둔다.
-  - `app.go` — 앱 상태·엔진 감독·스트리밍·다운로드·전역 단축키·트레이/자동 실행 연결
+  - `app.go` — 앱 상태·전역 단축키·창·트레이/자동 실행 연결
+  - `translation.go` / `download.go` / `engine.go` — 번역·모델 다운로드·엔진과 UI 상태 연결
   - `ui.go` — 번역/모델/설정 탭 화면
   - `assets.go` — `assets/` 아이콘 PNG embed(`internal/app/assets`)
 - `internal/winapi` — mygo가 감싸지 않는 Win32 조각(선택 텍스트 복사 합성, 클립보드). 빌드 태그 `windows`만.

@@ -141,16 +141,22 @@ Zed	제드
 main.go             진입점 (app.Run)
 internal/
   app/              mygo 화면·트레이·상태 연결
-    app.go          앱 상태·엔진 감독·스트리밍·다운로드·전역 단축키
+    app.go          앱 상태·창·트레이·전역 단축키
+    translation.go  번역 요청·결과·취소와 UI 상태 연결
+    download.go     모델 다운로드와 UI 진행률 연결
+    engine.go       엔진 실행 설정·이벤트와 UI 상태 연결
     ui.go           번역/모델/설정 탭
     assets.go       아이콘 embed (`internal/app/assets`)
   core/             플랫폼 독립 코어 (표준 라이브러리 + x/sys만)
     lang.go         38개 언어표
     prompt.go       Hy-MT2 공식 프롬프트 템플릿
+    prompt_settings.go 설정에서 프롬프트 모드·언어 선택
     server.go       OpenAI 호환 스트리밍 번역 클라이언트, /health 대기
     engine.go       llama-server 탐색·실행 인자·프로세스 감독
+    engine_log.go   동시 접근 가능한 최근 엔진 로그·오류 요약
     models.go       공식 GGUF 카탈로그·다운로드·진행률
     settings.go     설정 검증·원자적 저장
+    server_limits.go 설정 보정·편집 폼이 공유하는 서버 숫자 범위
     paths.go        설치/포터블 경로 해석
     glossary.go     용어집 파서
     normalize.go    출력 정규화

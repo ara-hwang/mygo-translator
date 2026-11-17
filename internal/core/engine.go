@@ -185,10 +185,7 @@ func runSupervisor(commands <-chan engineCommand, events chan<- EngineEvent, log
 	var exited chan childExit
 	var pending *LaunchConfig
 	var startedAt time.Time
-	var tail struct {
-		mu sync.Mutex
-		s  []string
-	}
+	var tail engineLogTail
 
 	publish := func(event EngineEvent) {
 		select {
@@ -220,9 +217,7 @@ func runSupervisor(commands <-chan engineCommand, events chan<- EngineEvent, log
 			switch {
 			case command.start != nil:
 				stopChild()
-				tail.mu.Lock()
-				tail.s = tail.s[:0]
-				tail.mu.Unlock()
+				tail.reset()
 				config := *command.start
 				appendEngineLog(logPath, fmt.Sprintf(
 					"=== starting %s (%d ctx, %d threads, ngl %d) ===",
@@ -259,7 +254,7 @@ func runSupervisor(commands <-chan engineCommand, events chan<- EngineEvent, log
 			if detail != "" {
 				message += " (" + detail + ")"
 			}
-			message += ". " + tailSummary(&tail)
+			message += ". " + tail.summary()
 			appendEngineLog(logPath, "[fatal] "+message)
 			publishState(EngineState{Kind: EngineFailed, Detail: message})
 			continue
@@ -306,10 +301,7 @@ func spawnEngine(
 	config *LaunchConfig,
 	logPath string,
 	events chan<- EngineEvent,
-	tail *struct {
-		mu sync.Mutex
-		s  []string
-	},
+	tail *engineLogTail,
 ) (*exec.Cmd, chan childExit, error) {
 	command := exec.Command(config.ServerPath, config.Args()...)
 	command.Stdin = nil
@@ -336,10 +328,7 @@ func spawnEngine(
 
 func pumpEngineStream(pipe interface {
 	Read([]byte) (int, error)
-}, logPath string, events chan<- EngineEvent, tail *struct {
-	mu sync.Mutex
-	s  []string
-},
+}, logPath string, events chan<- EngineEvent, tail *engineLogTail,
 ) {
 	buf := make([]byte, 8192)
 	var line strings.Builder
@@ -349,12 +338,7 @@ func pumpEngineStream(pipe interface {
 			return
 		}
 		appendEngineLog(logPath, raw)
-		tail.mu.Lock()
-		tail.s = append(tail.s, raw)
-		if len(tail.s) > TailLines {
-			tail.s = tail.s[len(tail.s)-TailLines:]
-		}
-		tail.mu.Unlock()
+		tail.append(raw)
 		select {
 		case events <- EngineEvent{Log: raw}:
 		default:
@@ -380,23 +364,6 @@ func pumpEngineStream(pipe interface {
 			return
 		}
 	}
-}
-
-func tailSummary(tail *struct {
-	mu sync.Mutex
-	s  []string
-}) string {
-	tail.mu.Lock()
-	defer tail.mu.Unlock()
-	if len(tail.s) == 0 {
-		return ""
-	}
-	joined := strings.Join(tail.s[max(0, len(tail.s)-3):], " / ")
-	runes := []rune(joined)
-	if len(runes) > 400 {
-		joined = string(runes[:400])
-	}
-	return joined
 }
 
 func appendEngineLog(logPath, line string) {

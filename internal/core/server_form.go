@@ -29,10 +29,10 @@ func (f ServerForm) Apply(s ServerSettings) (ServerSettings, error) {
 		min, max    int
 		dest        *int
 	}{
-		{"포트", f.Port, 1024, 65535, &s.Port},
-		{"컨텍스트 크기", f.CtxSize, 512, 32768, &s.CtxSize},
-		{"스레드", f.Threads, 1, 64, &s.Threads},
-		{"GPU 레이어", f.GPULayers, -1, 256, &s.GPULayers},
+		{"포트", f.Port, serverPortMin, serverPortMax, &s.Port},
+		{"컨텍스트 크기", f.CtxSize, serverCtxSizeMin, serverCtxSizeMax, &s.CtxSize},
+		{"스레드", f.Threads, serverThreadsMin, serverThreadsMax, &s.Threads},
+		{"GPU 레이어", f.GPULayers, serverGPULayersMin, serverGPULayersMax, &s.GPULayers},
 	}
 	for _, field := range fields {
 		n, err := strconv.Atoi(strings.TrimSpace(field.text))
