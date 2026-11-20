@@ -11,7 +11,7 @@ import (
 // StartEngine starts the managed server for the selected model.
 func (a *App) StartEngine() {
 	a.Mu.Lock()
-	config := a.launchConfig()
+	config, failure := a.resolveLaunch()
 	if config != nil {
 		a.EngineState = core.EngineState{Kind: core.EngineStarting}
 	}
@@ -19,7 +19,7 @@ func (a *App) StartEngine() {
 	if config == nil {
 		a.Mu.Lock()
 		a.EngineState = core.EngineState{Kind: core.EngineFailed,
-			Detail: "사용할 수 있는 모델 없음"}
+			Detail: failure}
 		a.Mu.Unlock()
 		a.Invalidate()
 		return
@@ -29,6 +29,18 @@ func (a *App) StartEngine() {
 
 // launchConfig resolves the model file and builds the launch config.
 func (a *App) launchConfig() *core.LaunchConfig {
+	config, _ := a.resolveLaunch()
+	return config
+}
+
+// Failure details distinguish a missing model from a missing engine binary.
+const (
+	failNoModel  = "사용할 수 있는 모델 없음 — 모델 탭에서 모델을 내려받으세요"
+	failNoServer = "실행 엔진(llama-server)을 찾을 수 없음 — 설정에서 엔진 경로를 지정하세요"
+)
+
+// resolveLaunch returns the launch config, or a failure detail.
+func (a *App) resolveLaunch() (*core.LaunchConfig, string) {
 	model := deref(a.settings.Server.ModelPath)
 	if model != "" && !fileExists(model) {
 		model = ""
@@ -37,11 +49,11 @@ func (a *App) launchConfig() *core.LaunchConfig {
 		model = core.PickModel(core.ScanGGUF(a.paths.ModelsDir()))
 	}
 	if model == "" {
-		return nil
+		return nil, failNoModel
 	}
 	server := core.DiscoverServer(exeDir(), deref(a.settings.Server.RuntimePath))
 	if server == "" {
-		return nil
+		return nil, failNoServer
 	}
 	return &core.LaunchConfig{
 		ServerPath: server,
@@ -51,7 +63,7 @@ func (a *App) launchConfig() *core.LaunchConfig {
 		Threads:    a.settings.Server.Threads,
 		GPULayers:  a.settings.Server.GPULayers,
 		Alias:      "hy-mt2",
-	}
+	}, ""
 }
 
 func deref(s *string) string {

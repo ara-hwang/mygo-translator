@@ -83,7 +83,15 @@ func (a *App) StartTranslate() {
 
 	go func() {
 		defer cancel()
-		result, err := core.TranslateStream(ctx, endpoint, model, core.GenParamsFrom(generation), prompt, nil)
+		var raw strings.Builder
+		onDelta := func(delta string) {
+			raw.WriteString(delta)
+			a.Mu.Lock()
+			a.OutputText = core.NormalizeOutput(raw.String())
+			a.Mu.Unlock()
+			a.Invalidate()
+		}
+		result, err := core.TranslateStream(ctx, endpoint, model, core.GenParamsFrom(generation), prompt, onDelta)
 		a.Mu.Lock()
 		a.Streaming = false
 		a.OutputStats = ""
@@ -107,7 +115,7 @@ func (a *App) StartTranslate() {
 			}
 		} else if result != nil {
 			a.OutputText = result.Text
-			if settings.History.Enabled && a.settings.History.Enabled && strings.TrimSpace(result.Text) != "" && !a.historyFailed {
+			if !result.Cancelled && settings.History.Enabled && a.settings.History.Enabled && strings.TrimSpace(result.Text) != "" && !a.historyFailed {
 				a.history = append([]core.HistoryEntry{{CreatedAt: time.Now(), SourceLang: settings.SourceLang, TargetLang: targetCode, Source: source, Translation: result.Text}}, a.history...)
 				a.saveHistoryLocked()
 			}

@@ -25,3 +25,9 @@ func TestEngineStatusColor(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveLaunchDistinguishesFailures(t *testing.T) {
+	if failNoModel == failNoServer {
+		t.Fatal("failure messages must differ")
+	}
+}
